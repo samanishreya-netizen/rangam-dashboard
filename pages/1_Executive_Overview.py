@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+import plotly.express as px
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from db import get_monthly_performance, get_business_target
@@ -98,6 +99,16 @@ with col_summary:
         bullets.append("Not enough months of data yet for trend commentary.")
     for b in bullets:
         st.write(f"- {b}")
+
+st.divider()
+st.subheader("Business performance trend")
+mp["hires_total"] = mp["hire_preid"] + mp["hire_sourced"]
+mp["starts_total"] = mp["start_preid"] + mp["start_sourced"]
+metric = st.selectbox("Metric", ["new_reqs", "worked_reqs", "submissions", "interviews",
+                                   "hires_total", "starts_total", "concluded", "headcount"])
+trend_fig = px.line(mp, x=month_labels, y=metric, markers=True, color_discrete_sequence=["#F27538"])
+trend_fig.update_layout(height=350, xaxis_title="Month", yaxis_title=metric)
+st.plotly_chart(trend_fig, use_container_width=True)
 
 st.divider()
 st.subheader("Monthly detail")
