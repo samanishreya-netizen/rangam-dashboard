@@ -195,4 +195,54 @@ edited = st.data_editor(
 
 if st.button("Save changes", type="primary"):
     original_ids = set(mp_df["fact_id"].dropna().astype(int)) if "fact_id" in mp_df else set()
-    edited_ids = set(edited["fact_id"].dropn
+    edited_ids = set(edited["fact_id"].dropna().astype(int)) if "fact_id" in edited else set()
+    deleted_ids = original_ids - edited_ids
+
+    for fid in deleted_ids:
+        old_row = mp_df[mp_df["fact_id"] == fid].iloc[0].to_dict()
+        sb.table("fact_monthly_performance").delete().eq("fact_id", int(fid)).execute()
+        sb.table("data_correction_log").insert({
+            "month": old_row["month"], "table_affected": "fact_monthly_performance",
+            "old_values": old_row, "new_values": None, "reason": "Manually deleted via Data Management page",
+        }).execute()
+
+    for _, row in edited.iterrows():
+        row_dict = {k: (None if pd.isna(v) else v) for k, v in row.to_dict().items()}
+        if row_dict.get("fact_id") is None:
+            if not row_dict.get("month"):
+                continue
+            row_dict.pop("fact_id", None)
+            if not row_dict.get("fy_code"):
+                row_dict["fy_code"] = "FY2026-27" if str(row_dict["month"]) >= "2026-04-01" else "FY2025-26"
+            sb.table("fact_monthly_performance").insert(row_dict).execute()
+        else:
+            fid = int(row_dict["fact_id"])
+            orig_row = mp_df[mp_df["fact_id"] == fid].iloc[0].to_dict()
+            orig_clean = {k: (None if pd.isna(v) else v) for k, v in orig_row.items()}
+            if {k: v for k, v in row_dict.items() if k != "fact_id"} != {k: v for k, v in orig_clean.items() if k != "fact_id"}:
+                update_dict = {k: v for k, v in row_dict.items() if k != "fact_id"}
+                sb.table("fact_monthly_performance").update(update_dict).eq("fact_id", fid).execute()
+                sb.table("data_correction_log").insert({
+                    "month": row_dict["month"], "table_affected": "fact_monthly_performance",
+                    "old_values": orig_clean, "new_values": row_dict,
+                    "reason": "Manually edited via Data Management page",
+                }).execute()
+
+    clear_caches()
+    st.success("Saved. Every change (add, edit, or delete) is logged below for audit.")
+    st.rerun()
+
+st.caption("Correction history (manual edits and deletes)")
+corrections = sb.table("data_correction_log").select("*").order("corrected_at", desc=True).limit(20).execute().data
+if corrections:
+    st.dataframe(pd.DataFrame(corrections), use_container_width=True)
+else:
+    st.write("No manual corrections logged yet.")
+
+st.divider()
+st.subheader("Upload history")
+history = sb.table("upload_log").select("*").order("uploaded_at", desc=True).execute().data
+if history:
+    st.dataframe(pd.DataFrame(history), use_container_width=True)
+else:
+    st.write("No uploads yet.")
