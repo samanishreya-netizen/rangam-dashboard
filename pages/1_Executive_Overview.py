@@ -41,20 +41,29 @@ with c3:
     st.metric("Submissions", int(mp["submissions"].sum()),
                delta(latest["submissions"], prev["submissions"]) if prev is not None else None)
 with c4:
-    total_hires = int(mp["hire_preid"].sum() + mp["hire_sourced"].sum())
-    st.metric("Total Hires", total_hires)
+    st.metric("Interviews", int(mp["interviews"].sum()))
 
+st.caption("Hires and Starts — Pre-ID (client-sourced) vs. Sourced (Rangam-sourced) shown separately")
 c5, c6, c7, c8 = st.columns(4)
 with c5:
-    st.metric("Interviews", int(mp["interviews"].sum()))
+    st.metric("Hires — Pre-ID", int(mp["hire_preid"].sum()))
 with c6:
-    total_starts = int(mp["start_preid"].sum() + mp["start_sourced"].sum())
-    st.metric("Starts", total_starts)
+    st.metric("Hires — Sourced", int(mp["hire_sourced"].sum()))
 with c7:
-    st.metric("Headcount (latest)", int(latest["headcount"]))
+    st.metric("Starts — Pre-ID", int(mp["start_preid"].sum()))
 with c8:
+    st.metric("Starts — Sourced", int(mp["start_sourced"].sum()))
+
+c9, c10, c11 = st.columns(3)
+with c9:
+    st.metric("Headcount (latest)", int(latest["headcount"]))
+with c10:
     open_months = mp[~mp["is_month_closed"]]["month"].tolist()
     st.metric("Months not yet closed", len(open_months), help=", ".join(str(m) for m in open_months) if open_months else None)
+with c11:
+    total_hires = int(mp["hire_preid"].sum() + mp["hire_sourced"].sum())
+    total_starts = int(mp["start_preid"].sum() + mp["start_sourced"].sum())
+    st.metric("Total Hires / Starts (combined)", f"{total_hires} / {total_starts}")
 
 st.divider()
 col_chart, col_summary = st.columns([1.3, 1])
