@@ -70,11 +70,12 @@ col_chart, col_summary = st.columns([1.3, 1])
 
 with col_chart:
     st.subheader("Revenue vs. target — cumulative")
+    month_labels = pd.to_datetime(mp["month"]).dt.strftime("%B'%Y")
     fig = go.Figure()
-    fig.add_bar(x=mp["month"].astype(str), y=mp["revenue_inr"] / 1e7, name="Actual (₹ Cr)", marker_color="#F27538")
+    fig.add_bar(x=month_labels, y=mp["revenue_inr"] / 1e7, name="Actual (₹ Cr)", marker_color="#F27538")
     if target_inr:
         monthly_target = target_inr / 12 / 1e7
-        fig.add_bar(x=mp["month"].astype(str), y=[monthly_target] * len(mp), name="Monthly target (₹ Cr)", marker_color="#28425B")
+        fig.add_bar(x=month_labels, y=[monthly_target] * len(mp), name="Monthly target (₹ Cr)", marker_color="#28425B")
     fig.update_layout(barmode="group", height=350, legend=dict(orientation="h", y=1.1))
     st.plotly_chart(fig, use_container_width=True)
 
@@ -100,6 +101,7 @@ with col_summary:
 
 st.divider()
 st.subheader("Monthly detail")
-st.dataframe(mp[["month", "new_reqs", "worked_reqs", "submissions", "interviews", "hire_preid", "hire_sourced",
-                  "start_preid", "start_sourced", "headcount", "revenue_inr", "revenue_usd", "is_month_closed"]],
-             use_container_width=True)
+mp_display = mp[["month", "new_reqs", "worked_reqs", "submissions", "interviews", "hire_preid", "hire_sourced",
+                  "start_preid", "start_sourced", "headcount", "revenue_inr", "revenue_usd", "is_month_closed"]].copy()
+mp_display["month"] = pd.to_datetime(mp_display["month"]).dt.strftime("%B'%Y")
+st.dataframe(mp_display, use_container_width=True, hide_index=True)
