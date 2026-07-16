@@ -74,11 +74,9 @@ if uploaded:
                 }).execute()
                 upload_id = upload_row.data[0]["upload_id"]
 
-                # dim_client / dim_msp lookups
                 clients_df = pd.DataFrame(sb.table("dim_client").select("client_id, client_name").execute().data)
                 msps_df = pd.DataFrame(sb.table("dim_msp").select("msp_id, msp_name").execute().data)
 
-                # company-wide facts
                 for _, r in overall_new.iterrows():
                     row = r.to_dict()
                     row["month"] = str(row["month"])
@@ -86,7 +84,6 @@ if uploaded:
                     row = {k: (None if pd.isna(v) else v) for k, v in row.items()}
                     sb.table("fact_monthly_performance").insert(row).execute()
 
-                # client-level facts
                 for _, r in client_new.iterrows():
                     row = r.to_dict()
                     row["month"] = str(row["month"])
@@ -101,7 +98,6 @@ if uploaded:
                     row = {k: (None if pd.isna(v) else v) for k, v in row.items()}
                     sb.table("fact_client_monthly_performance").insert(row).execute()
 
-                # recruiters — create any new ones, then insert facts
                 if len(data["recruiters"]):
                     existing_recruiters = pd.DataFrame(sb.table("dim_recruiter").select("recruiter_id, recruiter_name").execute().data)
                     for _, r in data["recruiters"].iterrows():
@@ -120,14 +116,12 @@ if uploaded:
                         row["recruiter_id"] = int(rid.iloc[0])
                         row["source_upload_id"] = upload_id
                         row = {k: (None if pd.isna(v) else v) for k, v in row.items()}
-                        # skip if this exact period+recruiter already exists (append-only safety)
                         existing = sb.table("fact_recruiter_period_performance").select("fact_id").eq(
                             "period_start", row["period_start"]).eq("period_end", row["period_end"]).eq(
                             "recruiter_id", row["recruiter_id"]).execute()
                         if not existing.data:
                             sb.table("fact_recruiter_period_performance").insert(row).execute()
 
-                # onboarding — same pattern
                 if len(data["onboarding"]):
                     existing_onb = pd.DataFrame(sb.table("dim_onboarding_specialist").select("onboarding_id, name").execute().data)
                     for _, r in data["onboarding"].iterrows():
@@ -170,9 +164,35 @@ else:
     st.write("No months in the database yet.")
 
 st.divider()
-st.subheader("Upload history")
-history = sb.table("upload_log").select("*").order("uploaded_at", desc=True).execute().data
-if history:
-    st.dataframe(pd.DataFrame(history), use_container_width=True)
-else:
-    st.write("No uploads yet.")
+st.subheader("Manual edit — Company-wide monthly performance")
+st.caption("Add, edit, or delete rows directly here — no file needed. Useful for quick fixes, like filling in "
+           "a month's revenue once it's finalized. Note: this table is separate from the per-client breakdown, "
+           "so editing a number here does not change the matching client-level rows — for anything beyond a "
+           "quick correction, use the file upload above instead so everything stays in sync.")
+
+sb = get_client()
+mp_rows = sb.table("fact_monthly_performance").select("*").order("month").execute().data
+mp_df = pd.DataFrame(mp_rows)
+if mp_df.empty:
+    mp_df = pd.DataFrame(columns=["fact_id", "month", "fy_code", "new_reqs", "worked_reqs", "submissions",
+                                    "interviews", "hire_preid", "hire_sourced", "start_preid", "start_sourced",
+                                    "notHire_preid", "notHire_sourced", "concluded", "headcount",
+                                    "revenue_inr", "revenue_usd", "is_month_closed"])
+
+editable_cols = ["fact_id", "month", "fy_code", "new_reqs", "worked_reqs", "submissions", "interviews",
+                  "hire_preid", "hire_sourced", "start_preid", "start_sourced", "notHire_preid", "notHire_sourced",
+                  "concluded", "headcount", "revenue_inr", "revenue_usd", "is_month_closed"]
+
+edited = st.data_editor(
+    mp_df[editable_cols], num_rows="dynamic", use_container_width=True, key="mp_manual_editor",
+    column_config={
+        "fact_id": st.column_config.NumberColumn("ID", disabled=True, help="Leave blank for a new row"),
+        "month": st.column_config.TextColumn("Month (YYYY-MM-01)", help="e.g. 2026-07-01"),
+        "fy_code": st.column_config.TextColumn("FY", help="e.g. FY2026-27"),
+        "is_month_closed": st.column_config.CheckboxColumn("Revenue closed?"),
+    },
+)
+
+if st.button("Save changes", type="primary"):
+    original_ids = set(mp_df["fact_id"].dropna().astype(int)) if "fact_id" in mp_df else set()
+    edited_ids = set(edited["fact_id"].dropn
