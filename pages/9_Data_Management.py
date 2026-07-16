@@ -189,9 +189,23 @@ edited = st.data_editor(
         "fact_id": st.column_config.NumberColumn("ID", disabled=True, help="Leave blank for a new row"),
         "month": st.column_config.TextColumn("Month (YYYY-MM-01)", help="e.g. 2026-07-01"),
         "fy_code": st.column_config.TextColumn("FY", help="e.g. FY2026-27"),
-        "is_month_closed": st.column_config.CheckboxColumn("Revenue closed?"),
+        "is_month_closed": st.column_config.CheckboxColumn(
+            "Revenue closed?", disabled=True,
+            help="Set automatically — becomes checked as soon as both Revenue INR and Revenue USD are filled in."),
     },
 )
+
+def _normalize_for_compare(v):
+    """Numbers-as-text from the database and numbers-as-numbers from the
+    edit widget should compare equal if the value is the same."""
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return v
+    try:
+        return round(float(v), 4)
+    except (TypeError, ValueError):
+        return str(v).strip()
 
 if st.button("Save changes", type="primary"):
     original_ids = set(mp_df["fact_id"].dropna().astype(int)) if "fact_id" in mp_df else set()
@@ -206,8 +220,10 @@ if st.button("Save changes", type="primary"):
             "old_values": old_row, "new_values": None, "reason": "Manually deleted via Data Management page",
         }).execute()
 
+    any_changes = False
     for _, row in edited.iterrows():
         row_dict = {k: (None if pd.isna(v) else v) for k, v in row.to_dict().items()}
+        row_dict["is_month_closed"] = row_dict.get("revenue_inr") is not None and row_dict.get("revenue_usd") is not None
         if row_dict.get("fact_id") is None:
             if not row_dict.get("month"):
                 continue
@@ -215,11 +231,14 @@ if st.button("Save changes", type="primary"):
             if not row_dict.get("fy_code"):
                 row_dict["fy_code"] = "FY2026-27" if str(row_dict["month"]) >= "2026-04-01" else "FY2025-26"
             sb.table("fact_monthly_performance").insert(row_dict).execute()
+            any_changes = True
         else:
             fid = int(row_dict["fact_id"])
             orig_row = mp_df[mp_df["fact_id"] == fid].iloc[0].to_dict()
             orig_clean = {k: (None if pd.isna(v) else v) for k, v in orig_row.items()}
-            if {k: v for k, v in row_dict.items() if k != "fact_id"} != {k: v for k, v in orig_clean.items() if k != "fact_id"}:
+            new_compare = {k: _normalize_for_compare(v) for k, v in row_dict.items() if k != "fact_id"}
+            old_compare = {k: _normalize_for_compare(v) for k, v in orig_clean.items() if k != "fact_id"}
+            if new_compare != old_compare:
                 update_dict = {k: v for k, v in row_dict.items() if k != "fact_id"}
                 sb.table("fact_monthly_performance").update(update_dict).eq("fact_id", fid).execute()
                 sb.table("data_correction_log").insert({
@@ -227,9 +246,13 @@ if st.button("Save changes", type="primary"):
                     "old_values": orig_clean, "new_values": row_dict,
                     "reason": "Manually edited via Data Management page",
                 }).execute()
+                any_changes = True
 
     clear_caches()
-    st.success("Saved. Every change (add, edit, or delete) is logged below for audit.")
+    if any_changes or deleted_ids:
+        st.success("Saved. Only the row(s) you actually changed are logged below for audit.")
+    else:
+        st.info("No changes detected — nothing was updated.")
     st.rerun()
 
 st.caption("Correction history (manual edits and deletes)")
