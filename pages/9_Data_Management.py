@@ -176,11 +176,11 @@ mp_df = pd.DataFrame(mp_rows)
 if mp_df.empty:
     mp_df = pd.DataFrame(columns=["fact_id", "month", "fy_code", "new_reqs", "worked_reqs", "submissions",
                                     "interviews", "hire_preid", "hire_sourced", "start_preid", "start_sourced",
-                                    "notHire_preid", "notHire_sourced", "concluded", "headcount",
+                                    "nothire_preid", "nothire_sourced", "concluded", "headcount",
                                     "revenue_inr", "revenue_usd", "is_month_closed"])
 
 editable_cols = ["fact_id", "month", "fy_code", "new_reqs", "worked_reqs", "submissions", "interviews",
-                  "hire_preid", "hire_sourced", "start_preid", "start_sourced", "notHire_preid", "notHire_sourced",
+                  "hire_preid", "hire_sourced", "start_preid", "start_sourced", "nothire_preid", "nothire_sourced",
                   "concluded", "headcount", "revenue_inr", "revenue_usd", "is_month_closed"]
 
 edited = st.data_editor(
