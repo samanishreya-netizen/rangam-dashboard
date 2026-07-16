@@ -22,8 +22,6 @@ import openpyxl
 
 EXCEL_EPOCH = datetime.date(1899, 12, 30)
 
-# Sheet name -> canonical client name / MSP name. Fixed mapping since the
-# template is now confirmed permanent.
 CLIENT_SHEET_MAP = {
     "BOA":    ("Bank of America", "Pontoon Solutions"),
     "DB":     ("Deutsche Bank", "Pontoon Solutions"),
@@ -86,10 +84,6 @@ def fy_code(d):
     return "FY2026-27" if d >= datetime.date(2026, 4, 1) else "FY2025-26"
 
 
-# ---------------------------------------------------------------------------
-# Overall Performance -> company-wide monthly facts
-# ---------------------------------------------------------------------------
-
 def parse_overall_performance(wb):
     ws = wb["Overall Performance "]
     rows = []
@@ -105,7 +99,7 @@ def parse_overall_performance(wb):
             "submissions": ws.cell(r, 4).value, "interviews": ws.cell(r, 5).value,
             "hire_preid": ws.cell(r, 6).value, "hire_sourced": ws.cell(r, 7).value,
             "start_preid": ws.cell(r, 8).value, "start_sourced": ws.cell(r, 9).value,
-            "notHire_preid": ws.cell(r, 10).value, "notHire_sourced": ws.cell(r, 11).value,
+            "nothire_preid": ws.cell(r, 10).value, "nothire_sourced": ws.cell(r, 11).value,
             "concluded": ws.cell(r, 12).value, "headcount": ws.cell(r, 13).value,
             "revenue_inr": rev_inr, "revenue_usd": rev_usd,
             "is_month_closed": rev_inr is not None and rev_usd is not None,
@@ -113,12 +107,8 @@ def parse_overall_performance(wb):
     return pd.DataFrame(rows)
 
 
-# ---------------------------------------------------------------------------
-# Per-client sheets -> client-monthly facts
-# ---------------------------------------------------------------------------
-
 def parse_client_sheet(ws, client, msp):
-    header_row2 = ws.cell(3, 8).value  # 'Pre-Id' if split layout
+    header_row2 = ws.cell(3, 8).value
     has_split = norm(header_row2) == "pre-id"
     data_start = 4 if has_split else 3
     rows = []
@@ -136,7 +126,7 @@ def parse_client_sheet(ws, client, msp):
             row.update({
                 "hire_preid": ws.cell(r, 8).value, "hire_sourced": ws.cell(r, 9).value, "hire_combined": None,
                 "start_preid": ws.cell(r, 10).value, "start_sourced": ws.cell(r, 11).value, "start_combined": None,
-                "notHire_preid": ws.cell(r, 12).value, "notHire_sourced": ws.cell(r, 13).value, "notHire_combined": None,
+                "nothire_preid": ws.cell(r, 12).value, "nothire_sourced": ws.cell(r, 13).value, "nothire_combined": None,
                 "concluded": ws.cell(r, 14).value, "headcount": ws.cell(r, 15).value,
                 "revenue_inr": clean_currency(ws.cell(r, 16).value),
                 "revenue_usd": clean_currency(ws.cell(r, 17).value),
@@ -145,7 +135,7 @@ def parse_client_sheet(ws, client, msp):
             row.update({
                 "hire_preid": None, "hire_sourced": None, "hire_combined": ws.cell(r, 8).value,
                 "start_preid": None, "start_sourced": None, "start_combined": ws.cell(r, 9).value,
-                "notHire_preid": None, "notHire_sourced": None, "notHire_combined": ws.cell(r, 10).value,
+                "nothire_preid": None, "nothire_sourced": None, "nothire_combined": ws.cell(r, 10).value,
                 "concluded": ws.cell(r, 11).value, "headcount": ws.cell(r, 12).value,
                 "revenue_inr": clean_currency(ws.cell(r, 13).value),
                 "revenue_usd": clean_currency(ws.cell(r, 14).value),
@@ -162,10 +152,6 @@ def parse_all_clients(wb):
             all_rows.extend(parse_client_sheet(wb[sheet_name], client, msp))
     return pd.DataFrame(all_rows)
 
-
-# ---------------------------------------------------------------------------
-# TR Performance / ONB Performance (separate sheets now)
-# ---------------------------------------------------------------------------
 
 def parse_tr_performance(wb, period_start, period_end):
     ws = wb["TR Performance"]
@@ -189,7 +175,7 @@ def parse_tr_performance(wb, period_start, period_end):
 def parse_onb_performance(wb, period_start, period_end):
     ws = wb["ONB Performance"]
     rows = []
-    for r in range(4, ws.max_row + 1):  # row 3 is 'Individual Goal', skip
+    for r in range(4, ws.max_row + 1):
         label = ws.cell(r, 1).value
         if label is None or norm(label) == "total":
             continue
@@ -203,10 +189,6 @@ def parse_onb_performance(wb, period_start, period_end):
         })
     return pd.DataFrame(rows)
 
-
-# ---------------------------------------------------------------------------
-# Client List -> master data refresh
-# ---------------------------------------------------------------------------
 
 def parse_client_list(wb):
     ws = wb["Client List"]
@@ -225,10 +207,6 @@ def parse_client_list(wb):
     return pd.DataFrame(rows)
 
 
-# ---------------------------------------------------------------------------
-# Validation
-# ---------------------------------------------------------------------------
-
 REQUIRED_SHEETS = ["Client List", "Overall Revenue ", "Overall Performance ",
                    "TR Performance", "ONB Performance"] + list(CLIENT_SHEET_MAP.keys())
 
@@ -241,13 +219,7 @@ def validate_workbook(wb):
     return warnings
 
 
-# ---------------------------------------------------------------------------
-# Main entry point
-# ---------------------------------------------------------------------------
-
 def parse_workbook(path):
-    """Returns a dict of clean dataframes ready for the caller to diff
-    against the database and insert (append-only)."""
     wb = openpyxl.load_workbook(path, data_only=True)
     warnings = validate_workbook(wb)
 
@@ -271,17 +243,3 @@ def parse_workbook(path):
         "recruiters": recruiters, "onboarding": onboarding,
         "months_detected": [str(m) for m in months], "warnings": warnings,
     }
-
-
-if __name__ == "__main__":
-    import sys
-    path = sys.argv[1] if len(sys.argv) > 1 else \
-        "/mnt/user-data/uploads/Domestic_Staffing_Monthly_Review_June_2026_1.xlsx"
-    data = parse_workbook(path)
-    print("Warnings:", data["warnings"] or "none")
-    print("Months detected:", data["months_detected"])
-    print("\nOverall:\n", data["overall"].to_string(index=False))
-    print(f"\nClientwise ({len(data['clientwise'])} rows):\n",
-          data["clientwise"][["month","msp","client","new_reqs","hire_sourced","hire_combined","revenue_usd","is_month_closed"]].to_string(index=False))
-    print(f"\nRecruiters ({len(data['recruiters'])} rows):\n", data["recruiters"].to_string(index=False))
-    print(f"\nOnboarding ({len(data['onboarding'])} rows):\n", data["onboarding"].to_string(index=False))
