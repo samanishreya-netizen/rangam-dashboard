@@ -208,7 +208,28 @@ if summary_a and summary_b:
             "Change": round(b_val - a_val, 2),
             "% Change": f"{pct_change:+.1f}%" if pct_change is not None else "—",
         })
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    comp_df_display = pd.DataFrame(rows)
+
+    def _color_change(val):
+        if isinstance(val, str):
+            if val == "—":
+                return ""
+            try:
+                num = float(val.replace("%", "").replace("+", ""))
+            except ValueError:
+                return ""
+        else:
+            num = val
+        if num > 0:
+            return "color: #2E7D6B; font-weight: 600"
+        if num < 0:
+            return "color: #F27538; font-weight: 600"
+        return ""
+
+    styled = comp_df_display.style.applymap(_color_change, subset=["Change", "% Change"])
+    st.dataframe(styled, use_container_width=True, hide_index=True)
+    st.caption("Green = increase, orange = decrease. Note: for 'Not Hires,' green (an increase) is actually "
+               "the unfavorable direction — read each metric in context, not just by color.")
 else:
     st.info("Not enough data in one or both selected periods to compare.")
 
