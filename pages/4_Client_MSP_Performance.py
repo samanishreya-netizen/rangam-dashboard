@@ -111,11 +111,11 @@ detail = filtered[["month_label", "msp_name", "client_name", "hours_worked", "av
 st.dataframe(detail, use_container_width=True, hide_index=True)
 
 # ---------------------------------------------------------------------------
-# Period comparison — any client, any two date ranges (month / quarter / year)
+# Period comparison — any client, any two periods (month / quarter / year)
 # ---------------------------------------------------------------------------
 st.divider()
 st.subheader("Period comparison")
-st.caption("Compare any two date ranges for a client (or all clients / an MSP) — e.g. April 2025 vs. April 2026, "
+st.caption("Compare any two periods for a client (or all clients / an MSP) — e.g. April 2025 vs. April 2026, "
            "Q1 2025 vs. Q1 2026, or full year 2025 vs. full year 2026. Uses all financial years in the database, "
            "not just the one selected above.")
 
@@ -131,20 +131,56 @@ with comp_client_col:
 if comp_client != "All":
     comp_scoped = comp_scoped[comp_scoped["client_name"] == comp_client]
 
-min_date, max_date = all_data["month"].min().date(), all_data["month"].max().date()
+granularity = st.radio("Compare by", ["Month", "Quarter", "Year"], horizontal=True, key="comp_granularity")
+
+available_months = sorted(all_data["month"].dt.to_period("M").unique())
+available_years = sorted({p.year for p in available_months})
+available_quarters = sorted({(p.year, (p.month - 1) // 3 + 1) for p in available_months})
+
+def period_bounds_month(period):
+    start = period.to_timestamp()
+    end = period.to_timestamp(how="end").normalize()
+    return start, end, period.strftime("%B'%Y")
+
+def period_bounds_quarter(year, q):
+    start_month = (q - 1) * 3 + 1
+    start = pd.Timestamp(year=year, month=start_month, day=1)
+    end = (start + pd.DateOffset(months=3)) - pd.DateOffset(days=1)
+    return start, end, f"Q{q} {year}"
+
+def period_bounds_year(year):
+    start = pd.Timestamp(year=year, month=1, day=1)
+    end = pd.Timestamp(year=year, month=12, day=31)
+    return start, end, str(year)
 
 pcol1, pcol2 = st.columns(2)
-with pcol1:
-    st.write("**Period A**")
-    period_a = st.date_input("Date range A", value=(min_date, max_date), key="period_a")
-with pcol2:
-    st.write("**Period B**")
-    period_b = st.date_input("Date range B", value=(min_date, max_date), key="period_b")
+if granularity == "Month":
+    with pcol1:
+        month_a = st.selectbox("Period A", available_months, index=max(0, len(available_months) - 2),
+                                 format_func=lambda p: p.strftime("%B'%Y"), key="month_a")
+    with pcol2:
+        month_b = st.selectbox("Period B", available_months, index=len(available_months) - 1,
+                                 format_func=lambda p: p.strftime("%B'%Y"), key="month_b")
+    start_a, end_a, label_a = period_bounds_month(month_a)
+    start_b, end_b, label_b = period_bounds_month(month_b)
+elif granularity == "Quarter":
+    with pcol1:
+        q_a = st.selectbox("Period A", available_quarters, index=max(0, len(available_quarters) - 2),
+                             format_func=lambda t: f"Q{t[1]} {t[0]}", key="q_a")
+    with pcol2:
+        q_b = st.selectbox("Period B", available_quarters, index=len(available_quarters) - 1,
+                             format_func=lambda t: f"Q{t[1]} {t[0]}", key="q_b")
+    start_a, end_a, label_a = period_bounds_quarter(*q_a)
+    start_b, end_b, label_b = period_bounds_quarter(*q_b)
+else:
+    with pcol1:
+        y_a = st.selectbox("Period A", available_years, index=max(0, len(available_years) - 2), key="y_a")
+    with pcol2:
+        y_b = st.selectbox("Period B", available_years, index=len(available_years) - 1, key="y_b")
+    start_a, end_a, label_a = period_bounds_year(y_a)
+    start_b, end_b, label_b = period_bounds_year(y_b)
 
-def summarize_period(df, date_range):
-    if len(date_range) != 2:
-        return None
-    start, end = pd.Timestamp(date_range[0]), pd.Timestamp(date_range[1])
+def summarize_period(df, start, end):
     sub = df[(df["month"] >= start) & (df["month"] <= end)]
     if sub.empty:
         return None
@@ -157,28 +193,24 @@ def summarize_period(df, date_range):
         "Not Hires": sub["nothire_preid"].fillna(0).sum() + sub["nothire_sourced"].fillna(0).sum() + sub["nothire_combined"].fillna(0).sum(),
         "Revenue (USD)": sub["revenue_usd"].fillna(0).sum(),
         "Revenue (INR)": sub["revenue_inr"].fillna(0).sum(),
-        "months_included": sub["month"].dt.strftime("%B'%Y").unique().tolist(),
     }
 
-summary_a = summarize_period(comp_scoped, period_a)
-summary_b = summarize_period(comp_scoped, period_b)
+summary_a = summarize_period(comp_scoped, start_a, end_a)
+summary_b = summarize_period(comp_scoped, start_b, end_b)
 
 if summary_a and summary_b:
-    st.write(f"Period A covers: {', '.join(summary_a.pop('months_included'))}")
-    st.write(f"Period B covers: {', '.join(summary_b.pop('months_included'))}")
-
     rows = []
     for k in summary_a:
         a_val, b_val = summary_a[k], summary_b[k]
         pct_change = ((b_val - a_val) / a_val * 100) if a_val else None
         rows.append({
-            "Metric": k, "Period A": round(a_val, 2), "Period B": round(b_val, 2),
+            "Metric": k, label_a: round(a_val, 2), label_b: round(b_val, 2),
             "Change": round(b_val - a_val, 2),
             "% Change": f"{pct_change:+.1f}%" if pct_change is not None else "—",
         })
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 else:
-    st.info("Not enough data in one or both selected ranges to compare.")
+    st.info("Not enough data in one or both selected periods to compare.")
 
 st.divider()
 st.subheader("Client summary — flags")
