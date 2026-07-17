@@ -226,7 +226,7 @@ if summary_a and summary_b:
             return "color: #F27538; font-weight: 600"
         return ""
 
-    styled = comp_df_display.style.applymap(_color_change, subset=["Change", "% Change"])
+    styled = comp_df_display.style.map(_color_change, subset=["Change", "% Change"])
     st.dataframe(styled, use_container_width=True, hide_index=True)
     st.caption("Green = increase, orange = decrease. Note: for 'Not Hires,' green (an increase) is actually "
                "the unfavorable direction — read each metric in context, not just by color.")
