@@ -80,7 +80,7 @@ c6.metric("Starts (total)", int(start_total))
 c7, c8, c9 = st.columns(3)
 c7.metric("Not Hires (total)", int(nothire_total))
 c8.metric("Revenue (INR)", f"₹{revenue_inr_sum/1e7:.2f} Cr")
-c9.metric("Revenue (USD)", f"${revenue_usd_sum:,.0f}")
+c9.metric("Revenue (USD)", f"${revenue_usd_sum:,.2f}")
 
 st.caption("Ratios — combined-column clients (no Pre-ID/Sourced split available) are counted as Sourced. "
            "Formulas: Submission-to-Interview = Interviews/Submissions · Interview-to-Hire = Hires/Interviews · "
@@ -92,11 +92,11 @@ hire_to_start = (start_total / hire_total) if hire_total else None
 close_rate = (start_total / new_reqs_sum) if new_reqs_sum else None
 back_out = (nothire_total / hire_total) if hire_total else None
 
-r1.metric("Submission-to-Interview", f"{sub_to_int*100:.1f}%" if sub_to_int is not None else "—")
-r2.metric("Interview-to-Hire", f"{int_to_hire*100:.1f}%" if int_to_hire is not None else "—")
-r3.metric("Hire-to-Start", f"{hire_to_start*100:.1f}%" if hire_to_start is not None else "—")
-r4.metric("Close Rate", f"{close_rate*100:.1f}%" if close_rate is not None else "—")
-r5.metric("Back Out", f"{back_out*100:.1f}%" if back_out is not None else "—")
+r1.metric("Submission-to-Interview", f"{sub_to_int*100:.2f}%" if sub_to_int is not None else "—")
+r2.metric("Interview-to-Hire", f"{int_to_hire*100:.2f}%" if int_to_hire is not None else "—")
+r3.metric("Hire-to-Start", f"{hire_to_start*100:.2f}%" if hire_to_start is not None else "—")
+r4.metric("Close Rate", f"{close_rate*100:.2f}%" if close_rate is not None else "—")
+r5.metric("Back Out", f"{back_out*100:.2f}%" if back_out is not None else "—")
 
 # ---------------------------------------------------------------------------
 # Detail table — cleaned up
@@ -107,7 +107,9 @@ detail = filtered[["month_label", "msp_name", "client_name", "hours_worked", "av
                     "worked_reqs", "submissions", "interviews", "hire_preid", "hire_sourced", "hire_combined",
                     "start_preid", "start_sourced", "start_combined", "nothire_preid", "nothire_sourced",
                     "nothire_combined", "concluded", "headcount",
-                    "revenue_inr", "revenue_usd", "is_month_closed"]].rename(columns={"month_label": "month"})
+                    "revenue_inr", "revenue_usd", "is_month_closed"]].rename(columns={"month_label": "month"}).copy()
+detail["revenue_inr"] = detail["revenue_inr"].apply(lambda v: f"₹{v:,.2f}" if pd.notna(v) else "—")
+detail["revenue_usd"] = detail["revenue_usd"].apply(lambda v: f"${v:,.2f}" if pd.notna(v) else "—")
 st.dataframe(detail, use_container_width=True, hide_index=True)
 
 # ---------------------------------------------------------------------------
@@ -198,14 +200,25 @@ def summarize_period(df, start, end):
 summary_a = summarize_period(comp_scoped, start_a, end_a)
 summary_b = summarize_period(comp_scoped, start_b, end_b)
 
+def _format_value(metric, val):
+    if metric == "Revenue (USD)":
+        return f"${val:,.2f}"
+    if metric == "Revenue (INR)":
+        return f"₹{val:,.2f}"
+    return f"{val:,.0f}"
+
 if summary_a and summary_b:
     rows = []
     for k in summary_a:
         a_val, b_val = summary_a[k], summary_b[k]
         pct_change = ((b_val - a_val) / a_val * 100) if a_val else None
+        change_val = b_val - a_val
         rows.append({
-            "Metric": k, label_a: round(a_val, 2), label_b: round(b_val, 2),
-            "Change": round(b_val - a_val, 2),
+            "Metric": k,
+            label_a: _format_value(k, a_val),
+            label_b: _format_value(k, b_val),
+            "Change": _format_value(k, change_val) if k not in ("Revenue (USD)", "Revenue (INR)")
+                      else (f"+{_format_value(k, change_val)}" if change_val >= 0 else _format_value(k, change_val)),
             "% Change": f"{pct_change:+.1f}%" if pct_change is not None else "—",
         })
     comp_df_display = pd.DataFrame(rows)
@@ -215,7 +228,7 @@ if summary_a and summary_b:
             if val == "—":
                 return ""
             try:
-                num = float(val.replace("%", "").replace("+", ""))
+                num = float(val.replace("%", "").replace("+", "").replace("$", "").replace("₹", "").replace(",", ""))
             except ValueError:
                 return ""
         else:
