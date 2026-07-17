@@ -61,9 +61,11 @@ hire_preid_sum = filtered["hire_preid"].fillna(0).sum()
 hire_sourced_sum = filtered["hire_sourced"].fillna(0).sum() + filtered["hire_combined"].fillna(0).sum()
 start_preid_sum = filtered["start_preid"].fillna(0).sum()
 start_sourced_sum = filtered["start_sourced"].fillna(0).sum() + filtered["start_combined"].fillna(0).sum()
+nothire_preid_sum = filtered["nothire_preid"].fillna(0).sum()
 nothire_sourced_sum = filtered["nothire_sourced"].fillna(0).sum() + filtered["nothire_combined"].fillna(0).sum()
 hire_total = hire_preid_sum + hire_sourced_sum
 start_total = start_preid_sum + start_sourced_sum
+nothire_total = nothire_preid_sum + nothire_sourced_sum
 revenue_inr_sum = filtered["revenue_inr"].fillna(0).sum()
 revenue_usd_sum = filtered["revenue_usd"].fillna(0).sum()
 
@@ -75,17 +77,20 @@ c4.metric("Interviews", int(interviews_sum))
 c5.metric("Hires (total)", int(hire_total))
 c6.metric("Starts (total)", int(start_total))
 
-c7, c8 = st.columns(2)
-c7.metric("Revenue (INR)", f"₹{revenue_inr_sum/1e7:.2f} Cr")
-c8.metric("Revenue (USD)", f"${revenue_usd_sum:,.0f}")
+c7, c8, c9 = st.columns(3)
+c7.metric("Not Hires (total)", int(nothire_total))
+c8.metric("Revenue (INR)", f"₹{revenue_inr_sum/1e7:.2f} Cr")
+c9.metric("Revenue (USD)", f"${revenue_usd_sum:,.0f}")
 
-st.caption("Ratios — combined-column clients (no Pre-ID/Sourced split available) are counted as Sourced.")
+st.caption("Ratios — combined-column clients (no Pre-ID/Sourced split available) are counted as Sourced. "
+           "Formulas: Submission-to-Interview = Interviews/Submissions · Interview-to-Hire = Hires/Interviews · "
+           "Hire-to-Start = Starts/Hires · Close Rate = Starts/New Reqs · Back Out = Not Hires/Hires.")
 r1, r2, r3, r4, r5 = st.columns(5)
 sub_to_int = (interviews_sum / submissions_sum) if submissions_sum else None
-int_to_hire = (hire_sourced_sum / (interviews_sum - hire_sourced_sum)) if (interviews_sum - hire_sourced_sum) > 0 else None
-close_rate = (hire_sourced_sum / (new_reqs_sum - hire_preid_sum)) if (new_reqs_sum - hire_preid_sum) > 0 else None
-back_out = (nothire_sourced_sum / hire_sourced_sum) if hire_sourced_sum else None
+int_to_hire = (hire_total / interviews_sum) if interviews_sum else None
 hire_to_start = (start_total / hire_total) if hire_total else None
+close_rate = (start_total / new_reqs_sum) if new_reqs_sum else None
+back_out = (nothire_total / hire_total) if hire_total else None
 
 r1.metric("Submission-to-Interview", f"{sub_to_int*100:.1f}%" if sub_to_int is not None else "—")
 r2.metric("Interview-to-Hire", f"{int_to_hire*100:.1f}%" if int_to_hire is not None else "—")
@@ -100,7 +105,8 @@ st.divider()
 st.subheader(f"Detail — {len(filtered)} rows")
 detail = filtered[["month_label", "msp_name", "client_name", "hours_worked", "avg_recruiters", "new_reqs",
                     "worked_reqs", "submissions", "interviews", "hire_preid", "hire_sourced", "hire_combined",
-                    "start_preid", "start_sourced", "start_combined", "concluded", "headcount",
+                    "start_preid", "start_sourced", "start_combined", "nothire_preid", "nothire_sourced",
+                    "nothire_combined", "concluded", "headcount",
                     "revenue_inr", "revenue_usd", "is_month_closed"]].rename(columns={"month_label": "month"})
 st.dataframe(detail, use_container_width=True, hide_index=True)
 
@@ -148,6 +154,7 @@ def summarize_period(df, date_range):
         "Interviews": sub["interviews"].fillna(0).sum(),
         "Hires": sub["hire_preid"].fillna(0).sum() + sub["hire_sourced"].fillna(0).sum() + sub["hire_combined"].fillna(0).sum(),
         "Starts": sub["start_preid"].fillna(0).sum() + sub["start_sourced"].fillna(0).sum() + sub["start_combined"].fillna(0).sum(),
+        "Not Hires": sub["nothire_preid"].fillna(0).sum() + sub["nothire_sourced"].fillna(0).sum() + sub["nothire_combined"].fillna(0).sum(),
         "Revenue (USD)": sub["revenue_usd"].fillna(0).sum(),
         "Revenue (INR)": sub["revenue_inr"].fillna(0).sum(),
         "months_included": sub["month"].dt.strftime("%B'%Y").unique().tolist(),
