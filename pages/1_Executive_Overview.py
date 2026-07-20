@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from db import get_monthly_performance, get_business_target
+from db import get_monthly_performance, get_business_target, get_benchmarks, evaluate_benchmark
 
 st.set_page_config(page_title="Executive Overview", layout="wide")
 st.title("Executive Overview")
@@ -65,6 +65,45 @@ with c11:
     total_hires = int(mp["hire_preid"].sum() + mp["hire_sourced"].sum())
     total_starts = int(mp["start_preid"].sum() + mp["start_sourced"].sum())
     st.metric("Total Hires / Starts (combined)", f"{total_hires} / {total_starts}")
+
+st.divider()
+st.subheader("Performance vs. Target")
+st.caption("Targets are set on the Target & Benchmark Admin page ('client' level). Actuals are the sourced-only "
+           "figures for this Financial Year.")
+
+new_reqs_sum = mp["new_reqs"].sum()
+submissions_sum = mp["submissions"].sum()
+interviews_sum = mp["interviews"].sum()
+hire_sourced_sum = mp["hire_sourced"].sum()
+start_sourced_sum = mp["start_sourced"].sum()
+nothire_sourced_sum = mp["nothire_sourced"].sum()
+
+pvt_actuals = {
+    "submission per req": (submissions_sum / new_reqs_sum) if new_reqs_sum else None,
+    "submission to interview": (interviews_sum / submissions_sum * 100) if submissions_sum else None,
+    "interview to hire": (hire_sourced_sum / interviews_sum * 100) if interviews_sum else None,
+    "close rate": (start_sourced_sum / new_reqs_sum * 100) if new_reqs_sum else None,
+    "back out": (nothire_sourced_sum / hire_sourced_sum * 100) if hire_sourced_sum else None,
+}
+pvt_labels = {
+    "submission per req": "Submission Per Req", "submission to interview": "Submission-to-Interview",
+    "interview to hire": "Interview-to-Hire", "close rate": "Close Rate", "back out": "Back Out",
+}
+benchmarks = get_benchmarks(FY, "client")
+
+status_colors = {"Meeting": "#2E7D6B", "Not Meeting": "#F27538", "No live data": "#848688", "No target set": "#848688"}
+pvt_cols = st.columns(5)
+for col, key in zip(pvt_cols, pvt_labels.keys()):
+    actual = pvt_actuals[key]
+    benchmark = benchmarks.get(key)
+    status, target_str = evaluate_benchmark(actual, benchmark)
+    with col:
+        st.metric(pvt_labels[key], f"{actual:.2f}%" if actual is not None and key != "submission per req"
+                   else (f"{actual:.2f}" if actual is not None else "—"))
+        color = status_colors[status]
+        target_line = f"Target: {target_str}" if target_str else "No target set"
+        st.markdown(f"<span style='color:{color}; font-weight:600; font-size:13px;'>{status}</span>"
+                    f"<br><span style='color:#848688; font-size:12px;'>{target_line}</span>", unsafe_allow_html=True)
 
 st.divider()
 col_chart, col_summary = st.columns([1.3, 1])
