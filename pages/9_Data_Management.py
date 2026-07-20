@@ -150,16 +150,114 @@ if uploaded:
 
 st.divider()
 st.subheader("Replace a month's data (correction)")
-st.caption("Use this only when a past month's figures need correcting. This overwrites that month only — every other month is untouched, and the change is logged.")
+st.caption("Use this only when a past month's figures need correcting. This overwrites that month only — every other month is untouched, and the change is logged. "
+           "Note: this updates company-wide and client-level monthly figures only — recruiter and onboarding data are stored per quarter, not per month, so they aren't touched by this flow.")
 sb = get_client()
 existing = sorted(months_already_in_db())
 if existing:
     month_to_replace = st.selectbox("Month to replace", existing)
     replace_file = st.file_uploader("Corrected workbook for this month", type=["xlsx"], key="replace_upload")
-    if replace_file and st.button("Preview replacement"):
-        st.info("Preview-before-replace flow: parse the corrected file, show old vs. new values side by side, "
-                "then require a second confirmation before writing. (Wire this up the same way as the import "
-                "flow above, targeting an UPDATE instead of INSERT, and writing the diff to data_correction_log.)")
+
+    if replace_file:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+            tmp.write(replace_file.read())
+            replace_tmp_path = tmp.name
+        try:
+            rep_data = ep.parse_workbook(replace_tmp_path)
+        except Exception as e:
+            st.error(f"Could not parse this file: {e}")
+            rep_data = None
+        finally:
+            os.unlink(replace_tmp_path)
+
+        if rep_data is not None:
+            new_overall_row = rep_data["overall"][rep_data["overall"]["month"].astype(str) == month_to_replace]
+            new_client_rows = rep_data["clientwise"][rep_data["clientwise"]["month"].astype(str) == month_to_replace]
+
+            if new_overall_row.empty:
+                st.error(f"This file doesn't contain data for {month_to_replace}. Upload the corrected file that "
+                         f"actually includes this month.")
+            else:
+                old_overall_res = sb.table("fact_monthly_performance").select("*").eq("month", month_to_replace).execute().data
+                old_overall = old_overall_res[0] if old_overall_res else None
+                new_row_dict = {k: (None if pd.isna(v) else v) for k, v in new_overall_row.iloc[0].to_dict().items()}
+
+                st.subheader(f"Preview — {month_to_replace}")
+                st.write("**Company-wide — current vs. corrected**")
+                compare_fields = ["new_reqs", "worked_reqs", "submissions", "interviews", "hire_preid", "hire_sourced",
+                                   "start_preid", "start_sourced", "nothire_preid", "nothire_sourced", "concluded",
+                                   "headcount", "revenue_inr", "revenue_usd"]
+                compare_rows = []
+                for f in compare_fields:
+                    old_v = old_overall.get(f) if old_overall else None
+                    new_v = new_row_dict.get(f)
+                    compare_rows.append({
+                        "Field": f, "Current (database)": old_v if old_v is not None else "—",
+                        "Corrected (file)": new_v if new_v is not None else "—",
+                        "Changes": "Yes" if str(old_v) != str(new_v) else "",
+                    })
+                st.dataframe(pd.DataFrame(compare_rows), use_container_width=True, hide_index=True)
+
+                old_client_res = sb.table("fact_client_monthly_performance").select(
+                    "*, dim_client(client_name)").eq("month", month_to_replace).execute().data
+                old_client_map = {r["dim_client"]["client_name"]: r for r in old_client_res if r.get("dim_client")}
+
+                if not new_client_rows.empty:
+                    st.write(f"**Client-level — {len(new_client_rows)} client rows, current vs. corrected**")
+                    client_compare = []
+                    for _, r in new_client_rows.iterrows():
+                        old_r = old_client_map.get(r["client"], {})
+                        client_compare.append({
+                            "Client": r["client"],
+                            "New Reqs": f"{old_r.get('new_reqs', '—')} → {r['new_reqs']}",
+                            "Submissions": f"{old_r.get('submissions', '—')} → {r['submissions']}",
+                            "Interviews": f"{old_r.get('interviews', '—')} → {r['interviews']}",
+                            "Revenue USD": f"{old_r.get('revenue_usd', '—')} → {r['revenue_usd']}",
+                        })
+                    st.dataframe(pd.DataFrame(client_compare), use_container_width=True, hide_index=True)
+
+                confirm = st.checkbox(f"I've reviewed the changes above and want to overwrite {month_to_replace} with these corrected values.")
+                if confirm and st.button("Confirm replacement", type="primary"):
+                    update_dict = {k: v for k, v in new_row_dict.items() if k != "month"}
+                    sb.table("fact_monthly_performance").update(update_dict).eq("month", month_to_replace).execute()
+                    sb.table("data_correction_log").insert({
+                        "month": month_to_replace, "table_affected": "fact_monthly_performance",
+                        "old_values": old_overall, "new_values": update_dict,
+                        "reason": "Replaced via corrected monthly file re-upload",
+                    }).execute()
+
+                    clients_df = pd.DataFrame(sb.table("dim_client").select("client_id, client_name").execute().data)
+                    msps_df = pd.DataFrame(sb.table("dim_msp").select("msp_id, msp_name").execute().data)
+                    for _, r in new_client_rows.iterrows():
+                        row = {k: (None if pd.isna(v) else v) for k, v in r.to_dict().items()}
+                        row["month"] = str(row["month"])
+                        client_name = row.pop("client")
+                        msp_name = row.pop("msp")
+                        cid_series = clients_df.loc[clients_df.client_name == client_name, "client_id"]
+                        mid_series = msps_df.loc[msps_df.msp_name == msp_name, "msp_id"]
+                        if cid_series.empty:
+                            st.error(f"Unknown client '{client_name}' — skipped. Add it in Client Master first.")
+                            continue
+                        cid = int(cid_series.iloc[0])
+                        old_row = old_client_map.get(client_name)
+                        existing_check = sb.table("fact_client_monthly_performance").select("fact_id").eq(
+                            "month", month_to_replace).eq("client_id", cid).execute().data
+                        if existing_check:
+                            sb.table("fact_client_monthly_performance").update(row).eq(
+                                "month", month_to_replace).eq("client_id", cid).execute()
+                        else:
+                            row["client_id"] = cid
+                            row["msp_id"] = int(mid_series.iloc[0]) if not mid_series.empty else None
+                            sb.table("fact_client_monthly_performance").insert(row).execute()
+                        sb.table("data_correction_log").insert({
+                            "month": month_to_replace, "table_affected": "fact_client_monthly_performance",
+                            "old_values": old_row, "new_values": row,
+                            "reason": f"Replaced via corrected monthly file re-upload ({client_name})",
+                        }).execute()
+
+                    clear_caches()
+                    st.success(f"{month_to_replace} has been replaced with the corrected data. Every field changed is logged below.")
+                    st.rerun()
 else:
     st.write("No months in the database yet.")
 
