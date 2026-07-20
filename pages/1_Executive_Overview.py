@@ -106,38 +106,15 @@ for col, key in zip(pvt_cols, pvt_labels.keys()):
                     f"<br><span style='color:#848688; font-size:12px;'>{target_line}</span>", unsafe_allow_html=True)
 
 st.divider()
-col_chart, col_summary = st.columns([1.3, 1])
-
-with col_chart:
-    st.subheader("Revenue vs. target — cumulative")
-    month_labels = pd.to_datetime(mp["month"]).dt.strftime("%B'%Y")
-    fig = go.Figure()
-    fig.add_bar(x=month_labels, y=mp["revenue_inr"] / 1e7, name="Actual (₹ Cr)", marker_color="#F27538")
-    if target_inr:
-        monthly_target = target_inr / 12 / 1e7
-        fig.add_bar(x=month_labels, y=[monthly_target] * len(mp), name="Monthly target (₹ Cr)", marker_color="#28425B")
-    fig.update_layout(barmode="group", height=350, legend=dict(orientation="h", y=1.1))
-    st.plotly_chart(fig, use_container_width=True)
-
-with col_summary:
-    st.subheader("Executive summary")
-    bullets = []
-    if len(mp) >= 2:
-        sub_int_now = mp.iloc[-1]["interviews"] / mp.iloc[-1]["submissions"] if mp.iloc[-1]["submissions"] else 0
-        sub_int_prev = mp.iloc[-2]["interviews"] / mp.iloc[-2]["submissions"] if mp.iloc[-2]["submissions"] else 0
-        if sub_int_prev:
-            chg = (sub_int_now - sub_int_prev) * 100
-            direction = "declined" if chg < 0 else "improved"
-            bullets.append(f"Submission-to-interview conversion {direction} from {sub_int_prev*100:.0f}% to {sub_int_now*100:.0f}% month-over-month.")
-    if open_months:
-        bullets.append(f"{', '.join(str(m) for m in open_months)} revenue not yet booked — excluded from target-achievement math above.")
-    if target_inr:
-        remaining = target_inr - ytd_revenue_inr
-        bullets.append(f"₹{remaining/1e7:.2f} Cr remaining against the FY target of ₹{target_inr/1e7:.0f} Cr.")
-    if not bullets:
-        bullets.append("Not enough months of data yet for trend commentary.")
-    for b in bullets:
-        st.write(f"- {b}")
+st.subheader("Revenue vs. target — cumulative")
+month_labels = pd.to_datetime(mp["month"]).dt.strftime("%B'%Y")
+fig = go.Figure()
+fig.add_bar(x=month_labels, y=mp["revenue_inr"] / 1e7, name="Actual (₹ Cr)", marker_color="#F27538")
+if target_inr:
+    monthly_target = target_inr / 12 / 1e7
+    fig.add_bar(x=month_labels, y=[monthly_target] * len(mp), name="Monthly target (₹ Cr)", marker_color="#28425B")
+fig.update_layout(barmode="group", height=350, legend=dict(orientation="h", y=1.1))
+st.plotly_chart(fig, use_container_width=True)
 
 st.divider()
 st.subheader("Business performance trend")
