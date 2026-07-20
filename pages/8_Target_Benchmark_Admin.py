@@ -1,7 +1,9 @@
 import streamlit as st
+import pandas as pd
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from db import get_client, require_admin_gate, get_business_target, clear_caches
+from db import (get_client, require_admin_gate, get_business_target, clear_caches,
+                 get_client_monthly_performance, get_recruiter_performance, get_onboarding_performance)
 
 st.set_page_config(page_title="Target & Benchmark Admin", layout="wide")
 require_admin_gate()
@@ -12,6 +14,40 @@ sb = get_client()
 FY = st.selectbox("Financial Year", ["FY2026-27", "FY2025-26"])
 current = get_business_target(FY)
 
+# ---------------------------------------------------------------------------
+# Readable change history — shared by Business Target and KPI Benchmarks
+# ---------------------------------------------------------------------------
+def render_history(table_name, title):
+    st.subheader(title)
+    history = sb.table("target_change_log").select("*").eq("fy_code", FY).eq(
+        "target_table", table_name).order("changed_at", desc=True).limit(50).execute().data
+    if not history:
+        st.write("No changes logged yet for this FY.")
+        return
+    rows = []
+    for h in history:
+        old = h.get("old_values") or {}
+        new = h.get("new_values") or {}
+        all_keys = set(old.keys()) | set(new.keys())
+        skip_keys = {"target_id", "benchmark_id", "effective_from", "created_by", "is_active"}
+        for k in sorted(all_keys - skip_keys):
+            old_v, new_v = old.get(k), new.get(k)
+            if old_v != new_v:
+                rows.append({
+                    "Date": h["changed_at"][:16].replace("T", " "),
+                    "Changed by": h.get("changed_by") or "admin",
+                    "Field": k,
+                    "Old value": old_v if old_v is not None else "—",
+                    "New value": new_v if new_v is not None else "—",
+                })
+    if rows:
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    else:
+        st.write("No field-level changes detected in the logged entries.")
+
+# ---------------------------------------------------------------------------
+# Business Target
+# ---------------------------------------------------------------------------
 st.subheader("Business Target")
 with st.form("business_target_form"):
     rev_inr = st.number_input("Annual Revenue Target (INR)", value=float(current["annual_revenue_target_inr"]) if current else 0.0, step=1000000.0)
@@ -42,36 +78,235 @@ if current:
     st.caption(f"Implied monthly target: ₹{current['annual_revenue_target_inr']/12/1e7:.2f} Cr / ${current['annual_revenue_target_usd']/12:,.0f}")
 
 st.divider()
-st.subheader("Target change history")
-history = sb.table("target_change_log").select("*").eq("fy_code", FY).order("changed_at", desc=True).execute().data
-if history:
-    for h in history:
-        st.write(f"**{h['changed_at']}** — {h['target_table']}")
-        col1, col2 = st.columns(2)
-        col1.write("Before:"); col1.json(h["old_values"] or {})
-        col2.write("After:"); col2.json(h["new_values"] or {})
-else:
-    st.write("No changes logged yet for this FY.")
+render_history("config_business_target", "Business target change history")
 
+# ---------------------------------------------------------------------------
+# KPI Benchmarks — full add/edit/delete, per level (client / recruiter / onboarding)
+# ---------------------------------------------------------------------------
 st.divider()
 st.subheader("KPI Benchmarks")
-st.caption("Standard ratios: Response Rate >=80%, Submission per Req 3-5, Submission-to-Interview >=33%, "
-           "Interview-to-Hire >=20%, Close Rate >=25%, Back Out <=20%.")
-with st.form("benchmark_form"):
-    kpi_name = st.text_input("KPI name")
-    applies_to = st.selectbox("Applies to", ["company", "client", "recruiter"])
-    target_val = st.number_input("Target value", format="%.4f")
-    comparison = st.selectbox("Comparison type", [">=", "<=", "between"])
-    unit = st.text_input("Unit", value="%")
-    if st.form_submit_button("Add benchmark"):
-        sb.table("config_kpi_benchmark").insert({
-            "fy_code": FY, "kpi_name": kpi_name, "applies_to_level": applies_to,
-            "target_value": target_val, "comparison_type": comparison, "unit": unit,
-        }).execute()
-        st.success("Benchmark added.")
+st.caption("Define the targets used to judge performance on the Client, Recruiter, and Onboarding pages. "
+           "Add, edit, or delete rows directly in the table below, then click Save.")
+
+STANDARD_KPIS = [
+    {"kpi_name": "Response Rate", "target_value": 80, "min_value": None, "max_value": None,
+     "comparison_type": ">=", "unit": "%", "description": "Average response rate to submissions"},
+    {"kpi_name": "Submission Per Req", "target_value": None, "min_value": 3, "max_value": 5,
+     "comparison_type": "between", "unit": "count", "description": "Qualified submissions per role"},
+    {"kpi_name": "Submission to Interview", "target_value": 33, "min_value": None, "max_value": None,
+     "comparison_type": ">=", "unit": "%", "description": "1 interview per <=3 submissions"},
+    {"kpi_name": "Interview to Hire", "target_value": 20, "min_value": None, "max_value": None,
+     "comparison_type": ">=", "unit": "%", "description": "1 hire per <=5 interviews"},
+    {"kpi_name": "Close Rate", "target_value": 25, "min_value": None, "max_value": None,
+     "comparison_type": ">=", "unit": "%", "description": ""},
+    {"kpi_name": "Back Out", "target_value": 20, "min_value": None, "max_value": None,
+     "comparison_type": "<=", "unit": "%", "description": ""},
+]
+
+seed_col1, seed_col2 = st.columns([1, 3])
+with seed_col1:
+    seed_level = st.selectbox("Level to seed", ["client", "recruiter"], key="seed_level")
+with seed_col2:
+    st.write("")
+    if st.button(f"Load the 6 standard KPIs for '{seed_level}'"):
+        existing_names = {b["kpi_name"].lower() for b in
+                           sb.table("config_kpi_benchmark").select("kpi_name").eq("fy_code", FY).eq(
+                               "applies_to_level", seed_level).execute().data}
+        inserted = 0
+        for kpi in STANDARD_KPIS:
+            if kpi["kpi_name"].lower() not in existing_names:
+                new_row = sb.table("config_kpi_benchmark").insert({
+                    **kpi, "fy_code": FY, "applies_to_level": seed_level, "is_active": True,
+                }).execute()
+                sb.table("target_change_log").insert({
+                    "target_table": "config_kpi_benchmark", "target_row_id": new_row.data[0]["benchmark_id"],
+                    "fy_code": FY, "old_values": None, "new_values": new_row.data[0],
+                }).execute()
+                inserted += 1
+        clear_caches()
+        st.success(f"Added {inserted} new benchmark(s) for '{seed_level}' (skipped any already present).")
         st.rerun()
 
-benchmarks = sb.table("config_kpi_benchmark").select("*").eq("fy_code", FY).eq("is_active", True).execute().data
-if benchmarks:
-    import pandas as pd
-    st.dataframe(pd.DataFrame(benchmarks), use_container_width=True)
+benchmark_rows = sb.table("config_kpi_benchmark").select("*").eq("fy_code", FY).eq("is_active", True).execute().data
+bm_df = pd.DataFrame(benchmark_rows)
+bm_cols = ["benchmark_id", "kpi_name", "applies_to_level", "target_value", "min_value", "max_value",
+           "comparison_type", "unit", "description"]
+if bm_df.empty:
+    bm_df = pd.DataFrame(columns=bm_cols)
+
+edited_bm = st.data_editor(
+    bm_df[bm_cols], num_rows="dynamic", use_container_width=True, key="benchmark_editor",
+    column_config={
+        "benchmark_id": st.column_config.NumberColumn("ID", disabled=True, help="Leave blank for a new row"),
+        "applies_to_level": st.column_config.SelectboxColumn("Level", options=["client", "recruiter", "onboarding", "company"]),
+        "comparison_type": st.column_config.SelectboxColumn("Comparison", options=[">=", "<=", "between"]),
+    },
+)
+
+def _normalize_bm(v):
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return v
+    try:
+        return round(float(v), 4)
+    except (TypeError, ValueError):
+        return str(v).strip()
+
+if st.button("Save benchmark changes", type="primary"):
+    original_ids = set(bm_df["benchmark_id"].dropna().astype(int)) if "benchmark_id" in bm_df else set()
+    edited_ids = set(edited_bm["benchmark_id"].dropna().astype(int)) if "benchmark_id" in edited_bm else set()
+    deleted_ids = original_ids - edited_ids
+
+    for bid in deleted_ids:
+        old_row = bm_df[bm_df["benchmark_id"] == bid].iloc[0].to_dict()
+        sb.table("config_kpi_benchmark").delete().eq("benchmark_id", int(bid)).execute()
+        sb.table("target_change_log").insert({
+            "target_table": "config_kpi_benchmark", "target_row_id": int(bid), "fy_code": FY,
+            "old_values": old_row, "new_values": None,
+        }).execute()
+
+    any_changes = False
+    for _, row in edited_bm.iterrows():
+        row_dict = {k: (None if pd.isna(v) else v) for k, v in row.to_dict().items()}
+        if row_dict.get("benchmark_id") is None:
+            if not row_dict.get("kpi_name"):
+                continue
+            row_dict.pop("benchmark_id", None)
+            row_dict["fy_code"] = FY
+            new_row = sb.table("config_kpi_benchmark").insert(row_dict).execute()
+            sb.table("target_change_log").insert({
+                "target_table": "config_kpi_benchmark", "target_row_id": new_row.data[0]["benchmark_id"],
+                "fy_code": FY, "old_values": None, "new_values": new_row.data[0],
+            }).execute()
+            any_changes = True
+        else:
+            bid = int(row_dict["benchmark_id"])
+            orig_row = bm_df[bm_df["benchmark_id"] == bid].iloc[0].to_dict()
+            orig_clean = {k: (None if pd.isna(v) else v) for k, v in orig_row.items()}
+            new_cmp = {k: _normalize_bm(v) for k, v in row_dict.items() if k != "benchmark_id"}
+            old_cmp = {k: _normalize_bm(v) for k, v in orig_clean.items() if k != "benchmark_id"}
+            if new_cmp != old_cmp:
+                update_dict = {k: v for k, v in row_dict.items() if k != "benchmark_id"}
+                sb.table("config_kpi_benchmark").update(update_dict).eq("benchmark_id", bid).execute()
+                sb.table("target_change_log").insert({
+                    "target_table": "config_kpi_benchmark", "target_row_id": bid, "fy_code": FY,
+                    "old_values": orig_clean, "new_values": row_dict,
+                }).execute()
+                any_changes = True
+
+    clear_caches()
+    if any_changes or deleted_ids:
+        st.success("Benchmark changes saved.")
+    else:
+        st.info("No changes detected.")
+    st.rerun()
+
+st.divider()
+render_history("config_kpi_benchmark", "Benchmark change history")
+
+# ---------------------------------------------------------------------------
+# Actual performance vs. benchmark — computed live from real data
+# ---------------------------------------------------------------------------
+st.divider()
+st.subheader("Actual performance vs. benchmark")
+st.caption("Actual values are computed live from the data already in this dashboard for the selected Financial Year.")
+
+report_level = st.selectbox("Level", ["client", "recruiter", "onboarding"], key="report_level")
+
+def compute_client_actuals(fy):
+    df = get_client_monthly_performance(fy)
+    if df.empty:
+        return {}
+    new_reqs = df["new_reqs"].fillna(0).sum()
+    submissions = df["submissions"].fillna(0).sum()
+    interviews = df["interviews"].fillna(0).sum()
+    hire_sourced = df["hire_sourced"].fillna(0).sum() + df["hire_combined"].fillna(0).sum()
+    start_sourced = df["start_sourced"].fillna(0).sum() + df["start_combined"].fillna(0).sum()
+    nothire_sourced = df["nothire_sourced"].fillna(0).sum() + df["nothire_combined"].fillna(0).sum()
+    return {
+        "submission per req": (submissions / new_reqs) if new_reqs else None,
+        "submission to interview": (interviews / submissions * 100) if submissions else None,
+        "interview to hire": (hire_sourced / interviews * 100) if interviews else None,
+        "close rate": (start_sourced / new_reqs * 100) if new_reqs else None,
+        "back out": (nothire_sourced / hire_sourced * 100) if hire_sourced else None,
+    }
+
+def compute_recruiter_actuals(fy):
+    df = get_recruiter_performance(fy)
+    if df.empty:
+        return {}
+    df = df[~df["is_pooled_bucket"].fillna(False)]
+    new_reqs = df["new_reqs"].fillna(0).sum()
+    submissions = df["submissions"].fillna(0).sum()
+    interviews = df["interviews"].fillna(0).sum()
+    hires = df["hires"].fillna(0).sum()
+    starts = df["starts"].fillna(0).sum()
+    not_hires = df["not_hires"].fillna(0).sum()
+    return {
+        "submission per req": (submissions / new_reqs) if new_reqs else None,
+        "submission to interview": (interviews / submissions * 100) if submissions else None,
+        "interview to hire": (hires / interviews * 100) if interviews else None,
+        "close rate": (starts / new_reqs * 100) if new_reqs else None,
+        "back out": (not_hires / hires * 100) if hires else None,
+    }
+
+def compute_onboarding_actuals(fy):
+    df = get_onboarding_performance(fy)
+    if df.empty:
+        return {}
+    return {
+        "avg doc completion hours": df["avg_doc_completion_hours"].mean(),
+        "survey completion ratio": df["avg_survey_completion_ratio"].mean() * 100 if df["avg_survey_completion_ratio"].notna().any() else None,
+        "survey satisfaction ratio": df["avg_survey_satisfaction_ratio"].mean() * 100 if df["avg_survey_satisfaction_ratio"].notna().any() else None,
+    }
+
+actuals_map = {
+    "client": compute_client_actuals,
+    "recruiter": compute_recruiter_actuals,
+    "onboarding": compute_onboarding_actuals,
+}
+actuals = actuals_map[report_level](FY)
+
+level_benchmarks = [b for b in benchmark_rows if b["applies_to_level"] == report_level]
+if not level_benchmarks:
+    st.info(f"No benchmarks defined yet for '{report_level}'. Add some above (or use 'Load the 6 standard KPIs').")
+else:
+    report_rows = []
+    for b in level_benchmarks:
+        key = b["kpi_name"].strip().lower()
+        actual = actuals.get(key)
+        if actual is None:
+            status = "No live data"
+        elif b["comparison_type"] == ">=":
+            status = "Meeting" if actual >= b["target_value"] else "Not Meeting"
+        elif b["comparison_type"] == "<=":
+            status = "Meeting" if actual <= b["target_value"] else "Not Meeting"
+        elif b["comparison_type"] == "between":
+            status = "Meeting" if (b["min_value"] or 0) <= actual <= (b["max_value"] or 1e12) else "Not Meeting"
+        else:
+            status = "No live data"
+
+        if b["comparison_type"] == "between":
+            target_display = f"{b['min_value']}–{b['max_value']} {b['unit'] or ''}".strip()
+        else:
+            target_display = f"{b['comparison_type']} {b['target_value']}{b['unit'] or ''}"
+        report_rows.append({
+            "KPI": b["kpi_name"], "Target": target_display,
+            "Actual": f"{actual:.2f}{b['unit'] or ''}" if actual is not None else "—",
+            "Status": status,
+        })
+
+    report_df = pd.DataFrame(report_rows)
+
+    def _status_color(val):
+        if val == "Meeting":
+            return "color: #2E7D6B; font-weight: 600"
+        if val == "Not Meeting":
+            return "color: #F27538; font-weight: 600"
+        return "color: #848688"
+
+    styled_report = report_df.style.map(_status_color, subset=["Status"])
+    st.dataframe(styled_report, use_container_width=True, hide_index=True)
+    st.caption("'No live data' means no benchmark-matching data exists yet for this KPI/level in the database "
+               "(e.g. Response Rate isn't tracked in the source Excel file, so it can't be auto-computed).")
