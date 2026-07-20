@@ -102,6 +102,39 @@ def get_dim(table):
     return pd.DataFrame(sb.table(table).select("*").execute().data)
 
 
+@st.cache_data(ttl=60)
+def get_benchmarks(fy_code, level):
+    """Returns {kpi_name_lowercase: benchmark_row} for the given FY and level."""
+    sb = get_client()
+    res = sb.table("config_kpi_benchmark").select("*").eq("fy_code", fy_code).eq(
+        "applies_to_level", level).eq("is_active", True).execute()
+    return {b["kpi_name"].strip().lower(): b for b in res.data}
+
+
+def evaluate_benchmark(actual, benchmark):
+    """Returns (status, target_display_string). status is one of:
+    'Meeting', 'Not Meeting', 'No live data', 'No target set'."""
+    if benchmark is None:
+        return "No target set", None
+    unit = benchmark.get("unit") or ""
+    ct = benchmark.get("comparison_type")
+    if ct == "between":
+        target_str = f"{benchmark['min_value']}–{benchmark['max_value']}{unit}"
+    else:
+        target_str = f"{ct} {benchmark['target_value']}{unit}"
+    if actual is None:
+        return "No live data", target_str
+    if ct == ">=":
+        met = actual >= benchmark["target_value"]
+    elif ct == "<=":
+        met = actual <= benchmark["target_value"]
+    elif ct == "between":
+        met = (benchmark["min_value"] or 0) <= actual <= (benchmark["max_value"] or 1e12)
+    else:
+        return "No target set", target_str
+    return ("Meeting" if met else "Not Meeting"), target_str
+
+
 def clear_caches():
     get_monthly_performance.clear()
     get_client_monthly_performance.clear()
@@ -109,6 +142,7 @@ def clear_caches():
     get_onboarding_performance.clear()
     get_business_target.clear()
     get_dim.clear()
+    get_benchmarks.clear()
 
 
 def months_already_in_db():
