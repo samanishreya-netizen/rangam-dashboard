@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from db import get_client_monthly_performance
+from db import get_client_monthly_performance, get_benchmarks, evaluate_benchmark
 
 st.set_page_config(page_title="Client & MSP Performance", layout="wide")
 st.title("Client & MSP Performance")
@@ -83,20 +83,39 @@ c8.metric("Revenue (INR)", f"₹{revenue_inr_sum/1e7:.2f} Cr")
 c9.metric("Revenue (USD)", f"${revenue_usd_sum:,.2f}")
 
 st.caption("Ratios — combined-column clients (no Pre-ID/Sourced split available) are counted as Sourced. "
-           "Formulas: Submission-to-Interview = Interviews/Submissions · Interview-to-Hire = Hires/Interviews · "
-           "Hire-to-Start = Starts/Hires · Close Rate = Starts/New Reqs · Back Out = Not Hires/Hires.")
-r1, r2, r3, r4, r5 = st.columns(5)
+           "Formulas: Submission Per Req = Submissions/New Reqs · Submission-to-Interview = Interviews/Submissions · "
+           "Interview-to-Hire = Hires/Interviews · Hire-to-Start = Starts/Hires · Close Rate = Starts/New Reqs · "
+           "Back Out = Not Hires/Hires. Badges compare against the 'client' targets set on the Target & Benchmark "
+           "Admin page.")
+submission_per_req = (submissions_sum / new_reqs_sum) if new_reqs_sum else None
 sub_to_int = (interviews_sum / submissions_sum) if submissions_sum else None
 int_to_hire = (hire_total / interviews_sum) if interviews_sum else None
 hire_to_start = (start_total / hire_total) if hire_total else None
 close_rate = (start_total / new_reqs_sum) if new_reqs_sum else None
 back_out = (nothire_total / hire_total) if hire_total else None
 
-r1.metric("Submission-to-Interview", f"{sub_to_int*100:.2f}%" if sub_to_int is not None else "—")
-r2.metric("Interview-to-Hire", f"{int_to_hire*100:.2f}%" if int_to_hire is not None else "—")
-r3.metric("Hire-to-Start", f"{hire_to_start*100:.2f}%" if hire_to_start is not None else "—")
-r4.metric("Close Rate", f"{close_rate*100:.2f}%" if close_rate is not None else "—")
-r5.metric("Back Out", f"{back_out*100:.2f}%" if back_out is not None else "—")
+benchmarks = get_benchmarks(FY, "client")
+status_colors = {"Meeting": "#2E7D6B", "Not Meeting": "#F27538", "No live data": "#848688", "No target set": "#848688"}
+
+def _ratio_card(col, label, key, value, is_percent=True):
+    with col:
+        display_val = f"{value*100:.2f}%" if (value is not None and is_percent) else (f"{value:.2f}" if value is not None else "—")
+        st.metric(label, display_val)
+        benchmark = benchmarks.get(key)
+        actual_for_compare = (value * 100) if (value is not None and is_percent) else value
+        status, target_str = evaluate_benchmark(actual_for_compare, benchmark)
+        color = status_colors[status]
+        target_line = f"Target: {target_str}" if target_str else "No target set"
+        st.markdown(f"<span style='color:{color}; font-weight:600; font-size:13px;'>{status}</span>"
+                    f"<br><span style='color:#848688; font-size:12px;'>{target_line}</span>", unsafe_allow_html=True)
+
+rr1, rr2, rr3, rr4, rr5, rr6 = st.columns(6)
+_ratio_card(rr1, "Submission Per Req", "submission per req", submission_per_req, is_percent=False)
+_ratio_card(rr2, "Submission-to-Interview", "submission to interview", sub_to_int)
+_ratio_card(rr3, "Interview-to-Hire", "interview to hire", int_to_hire)
+_ratio_card(rr4, "Hire-to-Start", "hire to start", hire_to_start)
+_ratio_card(rr5, "Close Rate", "close rate", close_rate)
+_ratio_card(rr6, "Back Out", "back out", back_out)
 
 # ---------------------------------------------------------------------------
 # Detail table — cleaned up
