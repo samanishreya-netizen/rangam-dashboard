@@ -93,9 +93,14 @@ def fy_code(d):
 def parse_overall_performance(wb):
     ws = wb["Overall Performance "]
     rows = []
-    for r in range(3, 6):
+    for r in range(3, ws.max_row + 1):
         month = excel_serial_to_date(ws.cell(r, 1).value)
         if month is None:
+            # blank row or the 'Total' row — stop scanning further rows
+            # only if we've already found at least one month, otherwise
+            # keep looking in case of a stray blank row
+            if rows:
+                break
             continue
         rev_inr = clean_currency(ws.cell(r, 14).value)
         rev_usd = clean_currency(ws.cell(r, 15).value)
@@ -169,6 +174,31 @@ def parse_all_clients(wb):
 
 def parse_tr_performance(wb, period_start, period_end):
     ws = wb["TR Performance"]
+    # Column positions are located by header text (row 2) rather than
+    # hardcoded indices — a 'Headcount' column has been seen inserted
+    # before 'Revenue' in some files, which silently shifts everything
+    # after it if positions are assumed fixed.
+    header_map = {}
+    for c in range(1, ws.max_column + 1):
+        h = norm(ws.cell(2, c).value)
+        if h:
+            header_map[h] = c
+
+    def col(*name_options, default=None):
+        for name in name_options:
+            if name in header_map:
+                return header_map[name]
+        return default
+
+    c_new_reqs = col("new reqs", default=2)
+    c_worked_reqs = col("worked reqs", default=3)
+    c_subs = col("subs", default=4)
+    c_ints = col("ints", default=5)
+    c_hire = col("hire", default=6)
+    c_start = col("start", default=7)
+    c_not_hire = col("not hire", default=8)
+    c_revenue = col("revenue", default=9)
+
     rows = []
     for r in range(3, ws.max_row + 1):
         label = ws.cell(r, 1).value
@@ -178,10 +208,10 @@ def parse_tr_performance(wb, period_start, period_end):
             "period_start": period_start, "period_end": period_end, "fy_code": fy_code(period_start),
             "recruiter_name": str(label).strip(),
             "is_pooled_bucket": norm(label) in ("pre-id", "left recruiters"),
-            "new_reqs": numval(ws.cell(r, 2).value), "worked_reqs": numval(ws.cell(r, 3).value),
-            "submissions": numval(ws.cell(r, 4).value), "interviews": numval(ws.cell(r, 5).value),
-            "hires": numval(ws.cell(r, 6).value), "starts": numval(ws.cell(r, 7).value),
-            "not_hires": numval(ws.cell(r, 8).value), "revenue": clean_currency(ws.cell(r, 9).value),
+            "new_reqs": numval(ws.cell(r, c_new_reqs).value), "worked_reqs": numval(ws.cell(r, c_worked_reqs).value),
+            "submissions": numval(ws.cell(r, c_subs).value), "interviews": numval(ws.cell(r, c_ints).value),
+            "hires": numval(ws.cell(r, c_hire).value), "starts": numval(ws.cell(r, c_start).value),
+            "not_hires": numval(ws.cell(r, c_not_hire).value), "revenue": clean_currency(ws.cell(r, c_revenue).value),
         })
     return pd.DataFrame(rows)
 
