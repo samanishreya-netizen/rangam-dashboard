@@ -101,27 +101,36 @@ if uploaded:
             }).execute()
             upload_id = upload_row.data[0]["upload_id"]
 
+            failed_rows = []
+
             with st.spinner("Saving..."):
                 # --- new months: company-wide ---
                 for _, r in overall_new.iterrows():
                     row = {k: (None if pd.isna(v) else v) for k, v in r.to_dict().items()}
                     row["month"] = str(row["month"])
                     row["source_upload_id"] = upload_id
-                    sb.table("fact_monthly_performance").insert(row).execute()
+                    try:
+                        sb.table("fact_monthly_performance").insert(row).execute()
+                    except Exception as e:
+                        failed_rows.append(f"Company-wide, {row['month']}: {e}")
 
                 # --- new months: client-level ---
                 for _, r in client_new.iterrows():
                     row = {k: (None if pd.isna(v) else v) for k, v in r.to_dict().items()}
                     row["month"] = str(row["month"])
-                    cid = clients_df.loc[clients_df.client_name == row.pop("client"), "client_id"]
+                    client_name = row.pop("client")
+                    cid = clients_df.loc[clients_df.client_name == client_name, "client_id"]
                     mid = msps_df.loc[msps_df.msp_name == row.pop("msp"), "msp_id"]
                     if cid.empty or mid.empty:
-                        st.error(f"Unknown client/MSP in row: {r.to_dict()} — add it in Client Master first.")
+                        failed_rows.append(f"Client '{client_name}': unknown client/MSP — add it in Client Master first.")
                         continue
                     row["client_id"] = int(cid.iloc[0])
                     row["msp_id"] = int(mid.iloc[0])
                     row["source_upload_id"] = upload_id
-                    sb.table("fact_client_monthly_performance").insert(row).execute()
+                    try:
+                        sb.table("fact_client_monthly_performance").insert(row).execute()
+                    except Exception as e:
+                        failed_rows.append(f"Client '{client_name}', {row['month']}: {e}")
 
                 # --- new months: recruiters ---
                 if len(data["recruiters"]):
@@ -136,15 +145,22 @@ if uploaded:
                         row = {k: (None if pd.isna(v) else v) for k, v in r.to_dict().items()}
                         row["period_start"] = str(row["period_start"])
                         row["period_end"] = str(row["period_end"])
-                        rid = existing_recruiters.loc[existing_recruiters.recruiter_name == row.pop("recruiter_name"), "recruiter_id"]
+                        recruiter_name = row.pop("recruiter_name")
+                        rid = existing_recruiters.loc[existing_recruiters.recruiter_name == recruiter_name, "recruiter_id"]
                         row.pop("is_pooled_bucket", None)
+                        if rid.empty:
+                            failed_rows.append(f"Recruiter '{recruiter_name}': could not resolve recruiter_id — skipped.")
+                            continue
                         row["recruiter_id"] = int(rid.iloc[0])
                         row["source_upload_id"] = upload_id
-                        existing = sb.table("fact_recruiter_period_performance").select("fact_id").eq(
-                            "period_start", row["period_start"]).eq("period_end", row["period_end"]).eq(
-                            "recruiter_id", row["recruiter_id"]).execute()
-                        if not existing.data:
-                            sb.table("fact_recruiter_period_performance").insert(row).execute()
+                        try:
+                            existing = sb.table("fact_recruiter_period_performance").select("fact_id").eq(
+                                "period_start", row["period_start"]).eq("period_end", row["period_end"]).eq(
+                                "recruiter_id", row["recruiter_id"]).execute()
+                            if not existing.data:
+                                sb.table("fact_recruiter_period_performance").insert(row).execute()
+                        except Exception as e:
+                            failed_rows.append(f"Recruiter '{recruiter_name}', {row['period_start']} to {row['period_end']}: {e}")
 
                 # --- new months: onboarding ---
                 if len(data["onboarding"]):
@@ -157,28 +173,38 @@ if uploaded:
                         row = {k: (None if pd.isna(v) else v) for k, v in r.to_dict().items()}
                         row["period_start"] = str(row["period_start"])
                         row["period_end"] = str(row["period_end"])
-                        oid = existing_onb.loc[existing_onb.name == row.pop("specialist_name"), "onboarding_id"]
+                        specialist_name = row.pop("specialist_name")
+                        oid = existing_onb.loc[existing_onb.name == specialist_name, "onboarding_id"]
+                        if oid.empty:
+                            failed_rows.append(f"Onboarding specialist '{specialist_name}': could not resolve ID — skipped.")
+                            continue
                         row["onboarding_id"] = int(oid.iloc[0])
                         row["source_upload_id"] = upload_id
-                        existing = sb.table("fact_onboarding_period_performance").select("fact_id").eq(
-                            "period_start", row["period_start"]).eq("period_end", row["period_end"]).eq(
-                            "onboarding_id", row["onboarding_id"]).execute()
-                        if not existing.data:
-                            sb.table("fact_onboarding_period_performance").insert(row).execute()
+                        try:
+                            existing = sb.table("fact_onboarding_period_performance").select("fact_id").eq(
+                                "period_start", row["period_start"]).eq("period_end", row["period_end"]).eq(
+                                "onboarding_id", row["onboarding_id"]).execute()
+                            if not existing.data:
+                                sb.table("fact_onboarding_period_performance").insert(row).execute()
+                        except Exception as e:
+                            failed_rows.append(f"Onboarding '{specialist_name}', {row['period_start']} to {row['period_end']}: {e}")
 
                 # --- existing months the user opted to update ---
                 for m in months_to_update:
-                    old_overall = sb.table("fact_monthly_performance").select("*").eq("month", m).execute().data
-                    old_overall = old_overall[0] if old_overall else None
-                    new_row = {k: (None if pd.isna(v) else v) for k, v in
-                               data["overall"][data["overall"]["month"].astype(str) == m].iloc[0].to_dict().items()}
-                    update_dict = {k: v for k, v in new_row.items() if k != "month"}
-                    sb.table("fact_monthly_performance").update(update_dict).eq("month", m).execute()
-                    sb.table("data_correction_log").insert({
-                        "month": m, "table_affected": "fact_monthly_performance",
-                        "old_values": old_overall, "new_values": update_dict,
-                        "reason": "Updated via combined monthly upload",
-                    }).execute()
+                    try:
+                        old_overall = sb.table("fact_monthly_performance").select("*").eq("month", m).execute().data
+                        old_overall = old_overall[0] if old_overall else None
+                        new_row = {k: (None if pd.isna(v) else v) for k, v in
+                                   data["overall"][data["overall"]["month"].astype(str) == m].iloc[0].to_dict().items()}
+                        update_dict = {k: v for k, v in new_row.items() if k != "month"}
+                        sb.table("fact_monthly_performance").update(update_dict).eq("month", m).execute()
+                        sb.table("data_correction_log").insert({
+                            "month": m, "table_affected": "fact_monthly_performance",
+                            "old_values": old_overall, "new_values": update_dict,
+                            "reason": "Updated via combined monthly upload",
+                        }).execute()
+                    except Exception as e:
+                        failed_rows.append(f"Company-wide update for {m}: {e}")
 
                     old_client_res = sb.table("fact_client_monthly_performance").select(
                         "*, dim_client(client_name)").eq("month", m).execute().data
@@ -192,26 +218,32 @@ if uploaded:
                         cid_series = clients_df.loc[clients_df.client_name == client_name, "client_id"]
                         mid_series = msps_df.loc[msps_df.msp_name == msp_name, "msp_id"]
                         if cid_series.empty:
-                            st.error(f"Unknown client '{client_name}' — skipped.")
+                            failed_rows.append(f"Client '{client_name}' unknown — skipped for {m}.")
                             continue
                         cid = int(cid_series.iloc[0])
                         old_row = old_client_map.get(client_name)
-                        existing_check = sb.table("fact_client_monthly_performance").select("fact_id").eq(
-                            "month", m).eq("client_id", cid).execute().data
-                        if existing_check:
-                            sb.table("fact_client_monthly_performance").update(row).eq(
-                                "month", m).eq("client_id", cid).execute()
-                        else:
-                            row["client_id"] = cid
-                            row["msp_id"] = int(mid_series.iloc[0]) if not mid_series.empty else None
-                            sb.table("fact_client_monthly_performance").insert(row).execute()
-                        sb.table("data_correction_log").insert({
-                            "month": m, "table_affected": "fact_client_monthly_performance",
-                            "old_values": old_row, "new_values": row,
-                            "reason": f"Updated via combined monthly upload ({client_name})",
-                        }).execute()
+                        try:
+                            existing_check = sb.table("fact_client_monthly_performance").select("fact_id").eq(
+                                "month", m).eq("client_id", cid).execute().data
+                            if existing_check:
+                                sb.table("fact_client_monthly_performance").update(row).eq(
+                                    "month", m).eq("client_id", cid).execute()
+                            else:
+                                row["client_id"] = cid
+                                row["msp_id"] = int(mid_series.iloc[0]) if not mid_series.empty else None
+                                sb.table("fact_client_monthly_performance").insert(row).execute()
+                            sb.table("data_correction_log").insert({
+                                "month": m, "table_affected": "fact_client_monthly_performance",
+                                "old_values": old_row, "new_values": row,
+                                "reason": f"Updated via combined monthly upload ({client_name})",
+                            }).execute()
+                        except Exception as e:
+                            failed_rows.append(f"Client '{client_name}' update for {m}: {e}")
 
             clear_caches()
+            if failed_rows:
+                st.error("Some rows could not be saved (everything else completed successfully):\n\n" +
+                          "\n".join(f"- {f}" for f in failed_rows))
             msg_parts = []
             if new_months:
                 msg_parts.append(f"added {len(new_months)} new month(s): {new_months}")
