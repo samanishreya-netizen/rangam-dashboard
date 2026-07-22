@@ -16,6 +16,28 @@ def get_client():
     return create_client(url, key)
 
 
+def clean_row(d):
+    """Converts a dict (typically from a pandas row.to_dict()) into plain
+    Python types before sending to Supabase. Pandas/numpy scalar types
+    (numpy.float64, numpy.int64, etc.) can otherwise get serialized as
+    strings like "2.0" instead of numbers, which Postgres then rejects
+    for integer columns with 'invalid input syntax for type integer'.
+    NaN/NaT/None all become None."""
+    out = {}
+    for k, v in d.items():
+        try:
+            is_na = pd.isna(v)
+        except (TypeError, ValueError):
+            is_na = False
+        if is_na:
+            out[k] = None
+        elif hasattr(v, "item"):
+            out[k] = v.item()
+        else:
+            out[k] = v
+    return out
+
+
 def df(table, select="*", **filters):
     """Fetch a table (with optional eq filters) as a DataFrame."""
     sb = get_client()

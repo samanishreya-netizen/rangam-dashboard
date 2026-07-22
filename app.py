@@ -31,8 +31,7 @@ st.markdown("""
 st.markdown("""
 Use the pages in the sidebar to navigate:
 
-- **Executive Overview** — top-line KPIs for CXO review
-- **Business Performance** — funnel trends over time
+- **Executive Overview** — top-line KPIs, revenue vs. target, business trends for CXO review
 - **Revenue Performance** — revenue vs. target, projections
 - **Client & MSP Performance** — drill-down by client/MSP
 - **Recruiter Performance** — productivity/quality matrix

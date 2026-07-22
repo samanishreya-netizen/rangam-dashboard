@@ -123,9 +123,46 @@ def parse_overall_performance(wb):
 # ---------------------------------------------------------------------------
 
 def parse_client_sheet(ws, client, msp):
-    header_row2 = ws.cell(3, 8).value  # 'Pre-Id' if split layout
-    has_split = norm(header_row2) == "pre-id"
+    # Locate every column by its row-2 header text rather than a hardcoded
+    # position. Merged category headers (Hire/Start/Not Hire) only populate
+    # their first cell, so this naturally gives the start column of each
+    # category. This also tolerates sheets missing columns entirely — e.g.
+    # Vantive has no 'Hours Worked' / 'Avg. Recruiters' columns, which
+    # shifts every column after them by 2 versus other client sheets.
+    header_map = {}
+    for c in range(1, ws.max_column + 1):
+        h = norm(ws.cell(2, c).value)
+        if h:
+            header_map[h] = c
+
+    def col(*name_options):
+        for name in name_options:
+            if name in header_map:
+                return header_map[name]
+        return None
+
+    c_hours = col("hours worked")
+    c_avgrec = col("avg. recruiters", "avg recruiters")
+    c_newreqs = col("new reqs")
+    c_workedreqs = col("worked reqs")
+    c_subs = col("subs")
+    c_ints = col("ints")
+    c_hire = col("hire")
+    c_start = col("start")
+    c_nothire = col("not hire")
+    c_concluded = col("concluded")
+    c_headcount = col("headcount")
+    c_revinr = col("revenue inr")
+    c_revusd = col("revenue usd")
+
+    def cell_val(r, c):
+        return ws.cell(r, c).value if c else None
+
+    # Split vs. combined Pre-Id/Sourced layout is detected by checking the
+    # row directly below the 'Hire' header for a 'Pre-Id' sub-label.
+    has_split = c_hire is not None and norm(ws.cell(3, c_hire).value) == "pre-id"
     data_start = 4 if has_split else 3
+
     rows = []
     for r in range(data_start, ws.max_row + 1):
         month = excel_serial_to_date(ws.cell(r, 1).value)
@@ -133,28 +170,26 @@ def parse_client_sheet(ws, client, msp):
             continue
         row = {
             "month": month, "fy_code": fy_code(month), "client": client, "msp": msp,
-            "hours_worked": ws.cell(r, 2).value, "avg_recruiters": ws.cell(r, 3).value,
-            "new_reqs": ws.cell(r, 4).value, "worked_reqs": ws.cell(r, 5).value,
-            "submissions": ws.cell(r, 6).value, "interviews": ws.cell(r, 7).value,
+            "hours_worked": cell_val(r, c_hours), "avg_recruiters": cell_val(r, c_avgrec),
+            "new_reqs": cell_val(r, c_newreqs), "worked_reqs": cell_val(r, c_workedreqs),
+            "submissions": cell_val(r, c_subs), "interviews": cell_val(r, c_ints),
         }
         if has_split:
             row.update({
-                "hire_preid": ws.cell(r, 8).value, "hire_sourced": ws.cell(r, 9).value, "hire_combined": None,
-                "start_preid": ws.cell(r, 10).value, "start_sourced": ws.cell(r, 11).value, "start_combined": None,
-                "nothire_preid": ws.cell(r, 12).value, "nothire_sourced": ws.cell(r, 13).value, "nothire_combined": None,
-                "concluded": ws.cell(r, 14).value, "headcount": ws.cell(r, 15).value,
-                "revenue_inr": clean_currency(ws.cell(r, 16).value),
-                "revenue_usd": clean_currency(ws.cell(r, 17).value),
+                "hire_preid": cell_val(r, c_hire), "hire_sourced": cell_val(r, c_hire + 1), "hire_combined": None,
+                "start_preid": cell_val(r, c_start), "start_sourced": cell_val(r, c_start + 1), "start_combined": None,
+                "nothire_preid": cell_val(r, c_nothire), "nothire_sourced": cell_val(r, c_nothire + 1), "nothire_combined": None,
             })
         else:
             row.update({
-                "hire_preid": None, "hire_sourced": None, "hire_combined": ws.cell(r, 8).value,
-                "start_preid": None, "start_sourced": None, "start_combined": ws.cell(r, 9).value,
-                "nothire_preid": None, "nothire_sourced": None, "nothire_combined": ws.cell(r, 10).value,
-                "concluded": ws.cell(r, 11).value, "headcount": ws.cell(r, 12).value,
-                "revenue_inr": clean_currency(ws.cell(r, 13).value),
-                "revenue_usd": clean_currency(ws.cell(r, 14).value),
+                "hire_preid": None, "hire_sourced": None, "hire_combined": cell_val(r, c_hire),
+                "start_preid": None, "start_sourced": None, "start_combined": cell_val(r, c_start),
+                "nothire_preid": None, "nothire_sourced": None, "nothire_combined": cell_val(r, c_nothire),
             })
+        row["concluded"] = cell_val(r, c_concluded)
+        row["headcount"] = cell_val(r, c_headcount)
+        row["revenue_inr"] = clean_currency(cell_val(r, c_revinr))
+        row["revenue_usd"] = clean_currency(cell_val(r, c_revusd))
         row["is_month_closed"] = row["revenue_inr"] is not None and row["revenue_usd"] is not None
         rows.append(row)
     return rows
