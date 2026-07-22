@@ -13,7 +13,7 @@ if rp.empty:
     st.info("No data yet for this Financial Year.")
     st.stop()
 
-active_all = rp[~rp["is_pooled_bucket"]].copy()
+active_all = rp.copy()
 pooled = rp[rp["is_pooled_bucket"]]
 
 recruiter_filter = st.selectbox("Recruiter", ["All"] + sorted(active_all["recruiter_name"].dropna().unique().tolist()))
@@ -57,13 +57,12 @@ def _ratio_card(col, label, key, value, is_percent=True):
         st.markdown(f"<span style='color:{color}; font-weight:600; font-size:13px;'>{status}</span>"
                     f"<br><span style='color:#848688; font-size:12px;'>{target_line}</span>", unsafe_allow_html=True)
 
-r1, r2, r3, r4, r5, r6 = st.columns(6)
+r1, r2, r3, r4, r5 = st.columns(5)
 _ratio_card(r1, "Submission Per Req", "submission per req", submission_per_req, is_percent=False)
 _ratio_card(r2, "Submission-to-Interview", "submission to interview", sub_to_int)
 _ratio_card(r3, "Interview-to-Hire", "interview to hire", int_to_hire)
-_ratio_card(r4, "Hire-to-Start", "hire to start", hire_to_start)
-_ratio_card(r5, "Close Rate", "close rate", close_rate)
-_ratio_card(r6, "Back Out", "back out", back_out)
+_ratio_card(r4, "Close Rate", "close rate", close_rate)
+_ratio_card(r5, "Back Out", "back out", back_out)
 
 active["submissions_per_req"] = (active["submissions"] / active["new_reqs"]).round(2)
 active["sub_to_int"] = (active["interviews"] / active["submissions"]).round(3)
@@ -73,7 +72,8 @@ active["bad_delivery"] = (active["not_hires"] / active["hires"].replace(0, pd.NA
 
 st.divider()
 st.subheader("Recruiter detail")
-st.dataframe(active[["recruiter_name", "new_reqs", "worked_reqs", "submissions", "interviews", "hires",
+active_detail = active[~active["is_pooled_bucket"]]
+st.dataframe(active_detail[["recruiter_name", "new_reqs", "worked_reqs", "submissions", "interviews", "hires",
                       "starts", "not_hires", "submissions_per_req", "sub_to_int", "int_to_hire",
                       "close_rate", "bad_delivery"]], use_container_width=True)
 
