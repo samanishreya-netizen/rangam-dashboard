@@ -77,10 +77,22 @@ c4.metric("Interviews", int(interviews_sum))
 c5.metric("Hires (total)", int(hire_total))
 c6.metric("Starts (total)", int(start_total))
 
-c7, c8, c9 = st.columns(3)
-c7.metric("Not Hires (total)", int(nothire_total))
-c8.metric("Revenue (INR)", f"₹{revenue_inr_sum/1e7:.2f} Cr")
-c9.metric("Revenue (USD)", f"${revenue_usd_sum:,.2f}")
+st.caption("Hires, Starts, Not Hires — Pre-ID vs. Sourced (combined-column clients counted as Sourced)")
+p1, p2, p3, p4, p5, p6 = st.columns(6)
+p1.metric("Hires — Pre-ID", int(hire_preid_sum))
+p2.metric("Hires — Sourced", int(hire_sourced_sum))
+p3.metric("Starts — Pre-ID", int(start_preid_sum))
+p4.metric("Starts — Sourced", int(start_sourced_sum))
+p5.metric("Not Hires — Pre-ID", int(nothire_preid_sum))
+p6.metric("Not Hires — Sourced", int(nothire_sourced_sum))
+
+c7, c8 = st.columns(2)
+c7.metric("Revenue (INR)", f"₹{revenue_inr_sum/1e7:.2f} Cr")
+c8.metric("Revenue (USD)", f"${revenue_usd_sum:,.2f}")
+
+st.caption("Note: 'New Reqs' summed here may not exactly match Executive Overview — the source Excel's "
+           "'Overall Performance' sheet and per-client sheets are entered separately and don't always agree "
+           "(a source data issue, not a calculation error). Submissions/Interviews/Hires/Starts do reconcile.")
 
 st.caption("Ratios — combined-column clients (no Pre-ID/Sourced split available) are counted as Sourced. "
            "Formulas: Submission Per Req = Submissions/New Reqs · Submission-to-Interview = Interviews/Submissions · "
@@ -153,15 +165,15 @@ if comp_client != "All":
     comp_scoped = comp_scoped[comp_scoped["client_name"] == comp_client]
 
 granularity = st.radio("Compare by", ["Month", "Quarter", "Year"], horizontal=True, key="comp_granularity")
+LIMITS = {"Month": (2, 3), "Quarter": (2, 4), "Year": (2, 5)}
+min_n, max_n = LIMITS[granularity]
 
 available_months = sorted(all_data["month"].dt.to_period("M").unique())
 available_years = sorted({p.year for p in available_months})
 available_quarters = sorted({(p.year, (p.month - 1) // 3 + 1) for p in available_months})
 
 def period_bounds_month(period):
-    start = period.to_timestamp()
-    end = period.to_timestamp(how="end").normalize()
-    return start, end, period.strftime("%B'%Y")
+    return period.to_timestamp(), period.to_timestamp(how="end").normalize(), period.strftime("%B'%Y")
 
 def period_bounds_quarter(year, q):
     start_month = (q - 1) * 3 + 1
@@ -170,36 +182,20 @@ def period_bounds_quarter(year, q):
     return start, end, f"Q{q} {year}"
 
 def period_bounds_year(year):
-    start = pd.Timestamp(year=year, month=1, day=1)
-    end = pd.Timestamp(year=year, month=12, day=31)
-    return start, end, str(year)
+    return pd.Timestamp(year=year, month=1, day=1), pd.Timestamp(year=year, month=12, day=31), str(year)
 
-pcol1, pcol2 = st.columns(2)
+st.caption(f"Select {min_n} to {max_n} {granularity.lower()}(s) to compare.")
 if granularity == "Month":
-    with pcol1:
-        month_a = st.selectbox("Period A", available_months, index=max(0, len(available_months) - 2),
-                                 format_func=lambda p: p.strftime("%B'%Y"), key="month_a")
-    with pcol2:
-        month_b = st.selectbox("Period B", available_months, index=len(available_months) - 1,
-                                 format_func=lambda p: p.strftime("%B'%Y"), key="month_b")
-    start_a, end_a, label_a = period_bounds_month(month_a)
-    start_b, end_b, label_b = period_bounds_month(month_b)
+    selected = st.multiselect("Periods", available_months, default=available_months[-min_n:],
+                                format_func=lambda p: p.strftime("%B'%Y"), key="cmp_months")
+    periods = [period_bounds_month(p) for p in selected]
 elif granularity == "Quarter":
-    with pcol1:
-        q_a = st.selectbox("Period A", available_quarters, index=max(0, len(available_quarters) - 2),
-                             format_func=lambda t: f"Q{t[1]} {t[0]}", key="q_a")
-    with pcol2:
-        q_b = st.selectbox("Period B", available_quarters, index=len(available_quarters) - 1,
-                             format_func=lambda t: f"Q{t[1]} {t[0]}", key="q_b")
-    start_a, end_a, label_a = period_bounds_quarter(*q_a)
-    start_b, end_b, label_b = period_bounds_quarter(*q_b)
+    selected = st.multiselect("Periods", available_quarters, default=available_quarters[-min_n:],
+                                format_func=lambda t: f"Q{t[1]} {t[0]}", key="cmp_quarters")
+    periods = [period_bounds_quarter(*t) for t in selected]
 else:
-    with pcol1:
-        y_a = st.selectbox("Period A", available_years, index=max(0, len(available_years) - 2), key="y_a")
-    with pcol2:
-        y_b = st.selectbox("Period B", available_years, index=len(available_years) - 1, key="y_b")
-    start_a, end_a, label_a = period_bounds_year(y_a)
-    start_b, end_b, label_b = period_bounds_year(y_b)
+    selected = st.multiselect("Periods", available_years, default=available_years[-min_n:], key="cmp_years")
+    periods = [period_bounds_year(y) for y in selected]
 
 def summarize_period(df, start, end):
     sub = df[(df["month"] >= start) & (df["month"] <= end)]
@@ -216,9 +212,6 @@ def summarize_period(df, start, end):
         "Revenue (INR)": sub["revenue_inr"].fillna(0).sum(),
     }
 
-summary_a = summarize_period(comp_scoped, start_a, end_a)
-summary_b = summarize_period(comp_scoped, start_b, end_b)
-
 def _format_value(metric, val):
     if metric == "Revenue (USD)":
         return f"${val:,.2f}"
@@ -226,54 +219,23 @@ def _format_value(metric, val):
         return f"₹{val:,.2f}"
     return f"{val:,.0f}"
 
-if summary_a and summary_b:
-    rows = []
-    for k in summary_a:
-        a_val, b_val = summary_a[k], summary_b[k]
-        pct_change = ((b_val - a_val) / a_val * 100) if a_val else None
-        change_val = b_val - a_val
-        rows.append({
-            "Metric": k,
-            label_a: _format_value(k, a_val),
-            label_b: _format_value(k, b_val),
-            "Change": _format_value(k, change_val) if k not in ("Revenue (USD)", "Revenue (INR)")
-                      else (f"+{_format_value(k, change_val)}" if change_val >= 0 else _format_value(k, change_val)),
-            "% Change": f"{pct_change:+.1f}%" if pct_change is not None else "—",
-        })
-    comp_df_display = pd.DataFrame(rows)
-
-    def _color_change(val):
-        if isinstance(val, str):
-            if val == "—":
-                return ""
-            try:
-                num = float(val.replace("%", "").replace("+", "").replace("$", "").replace("₹", "").replace(",", ""))
-            except ValueError:
-                return ""
-        else:
-            num = val
-        if num > 0:
-            return "color: #2E7D6B; font-weight: 600"
-        if num < 0:
-            return "color: #F27538; font-weight: 600"
-        return ""
-
-    styled = comp_df_display.style.map(_color_change, subset=["Change", "% Change"])
-    st.dataframe(styled, use_container_width=True, hide_index=True)
-    st.caption("Green = increase, orange = decrease. Note: for 'Not Hires,' green (an increase) is actually "
-               "the unfavorable direction — read each metric in context, not just by color.")
+if len(selected) < min_n:
+    st.warning(f"Select at least {min_n} {granularity.lower()}(s).")
+elif len(selected) > max_n:
+    st.warning(f"Select at most {max_n} {granularity.lower()}(s).")
 else:
-    st.info("Not enough data in one or both selected periods to compare.")
+    summaries = [(label, summarize_period(comp_scoped, start, end)) for start, end, label in periods]
+    summaries = [(l, s) for l, s in summaries if s is not None]
+    if len(summaries) < 2:
+        st.info("Not enough data in the selected periods to compare.")
+    else:
+        metrics = list(summaries[0][1].keys())
+        rows = []
+        for m in metrics:
+            row = {"Metric": m}
+            for label, s in summaries:
+                row[label] = _format_value(m, s[m])
+            rows.append(row)
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-st.divider()
-st.subheader("Client summary — flags")
-summary = filtered.groupby("client_name").agg(
-    new_reqs=("new_reqs", "sum"), submissions=("submissions", "sum"),
-    interviews=("interviews", "sum"), revenue_usd=("revenue_usd", "sum"),
-).reset_index()
-summary["submission_per_req"] = (summary["submissions"] / summary["new_reqs"]).round(2)
-low_coverage = summary[summary["submission_per_req"] < 2]
-if not low_coverage.empty:
-    st.write("**Low requirement coverage (< 2 submissions per requirement):**", ", ".join(low_coverage["client_name"]))
-else:
-    st.write("No clients flagged for low requirement coverage in this filter.")
+

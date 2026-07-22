@@ -16,32 +16,28 @@ if mp.empty:
 
 client_filter = st.selectbox("Client", ["All (company-wide)"] + sorted(cmp_df["client_name"].dropna().unique().tolist()))
 
+# Sourced-only hires/starts, matching Executive Overview's ratio methodology
 if client_filter == "All (company-wide)":
     new_reqs = mp["new_reqs"].sum()
     submissions = mp["submissions"].sum()
     interviews = mp["interviews"].sum()
-    hires = mp["hire_preid"].sum() + mp["hire_sourced"].sum()
-    starts = mp["start_preid"].sum() + mp["start_sourced"].sum()
+    hires = mp["hire_sourced"].sum()
+    starts = mp["start_sourced"].sum()
 else:
     sub = cmp_df[cmp_df["client_name"] == client_filter]
     new_reqs = sub["new_reqs"].sum()
     submissions = sub["submissions"].sum()
     interviews = sub["interviews"].sum()
-    hires = sub[["hire_preid", "hire_sourced", "hire_combined"]].fillna(0).sum().sum()
-    starts = sub[["start_preid", "start_sourced", "start_combined"]].fillna(0).sum().sum()
+    hires = sub["hire_sourced"].fillna(0).sum() + sub["hire_combined"].fillna(0).sum()
+    starts = sub["start_sourced"].fillna(0).sum() + sub["start_combined"].fillna(0).sum()
 
 stages = ["Requirements", "Submissions", "Interviews", "Hires", "Starts"]
 values = [new_reqs, submissions, interviews, hires, starts]
 
 fig = go.Figure(go.Funnel(
     y=stages, x=values,
-    textinfo="value+percent initial",
+    textinfo="value+percent previous",
     marker={"color": ["#28425B", "#3a5a7a", "#F27538", "#e0472a", "#848688"]},
 ))
 fig.update_layout(height=450)
 st.plotly_chart(fig, use_container_width=True)
-
-st.subheader("Stage-to-stage conversion")
-for i in range(len(stages) - 1):
-    rate = (values[i+1] / values[i] * 100) if values[i] else 0
-    st.write(f"**{stages[i]} → {stages[i+1]}**: {rate:.1f}%")

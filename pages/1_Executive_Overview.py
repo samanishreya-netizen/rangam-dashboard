@@ -29,22 +29,28 @@ def delta(cur, prv):
 c1, c2, c3, c4 = st.columns(4)
 closed_months = mp[mp["is_month_closed"]]
 ytd_revenue_inr = closed_months["revenue_inr"].sum()
+ytd_revenue_usd = closed_months["revenue_usd"].sum()
 target_inr = target["annual_revenue_target_inr"] if target else None
+quarterly_target_inr = target_inr / 4 if target_inr else None
 achievement = (ytd_revenue_inr / target_inr * 100) if target_inr else None
 
 with c1:
     st.metric("YTD Revenue (INR)", f"₹{ytd_revenue_inr/1e7:.2f} Cr",
                f"{achievement:.1f}% of target" if achievement else None)
 with c2:
-    st.metric("New Requirements", int(mp["new_reqs"].sum()),
-               delta(latest["new_reqs"], prev["new_reqs"]) if prev is not None else None)
+    st.metric("YTD Revenue (USD)", f"${ytd_revenue_usd:,.2f}")
 with c3:
-    st.metric("Submissions", int(mp["submissions"].sum()),
-               delta(latest["submissions"], prev["submissions"]) if prev is not None else None)
+    st.metric("Quarterly Revenue Target (INR)", f"₹{quarterly_target_inr/1e7:.2f} Cr" if quarterly_target_inr else "—")
 with c4:
     st.metric("Interviews", int(mp["interviews"].sum()))
 
-st.caption("Hires and Starts — Pre-ID (client-sourced) vs. Sourced (Rangam-sourced) shown separately")
+c1b, c2b = st.columns(2)
+with c1b:
+    st.metric("New Requirements", int(mp["new_reqs"].sum()))
+with c2b:
+    st.metric("Submissions", int(mp["submissions"].sum()))
+
+st.caption("Hires, Starts, Not Hires — Pre-ID (client-sourced) vs. Sourced (Rangam-sourced) shown separately")
 c5, c6, c7, c8 = st.columns(4)
 with c5:
     st.metric("Hires — Pre-ID", int(mp["hire_preid"].sum()))
@@ -54,6 +60,12 @@ with c7:
     st.metric("Starts — Pre-ID", int(mp["start_preid"].sum()))
 with c8:
     st.metric("Starts — Sourced", int(mp["start_sourced"].sum()))
+
+c8a, c8b = st.columns(2)
+with c8a:
+    st.metric("Not Hires — Pre-ID", int(mp["nothire_preid"].sum()))
+with c8b:
+    st.metric("Not Hires — Sourced", int(mp["nothire_sourced"].sum()))
 
 c9, c10, c11 = st.columns(3)
 with c9:
