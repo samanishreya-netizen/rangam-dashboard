@@ -121,13 +121,12 @@ def _ratio_card(col, label, key, value, is_percent=True):
         st.markdown(f"<span style='color:{color}; font-weight:600; font-size:13px;'>{status}</span>"
                     f"<br><span style='color:#848688; font-size:12px;'>{target_line}</span>", unsafe_allow_html=True)
 
-rr1, rr2, rr3, rr4, rr5, rr6 = st.columns(6)
+rr1, rr2, rr3, rr4, rr5 = st.columns(5)
 _ratio_card(rr1, "Submission Per Req", "submission per req", submission_per_req, is_percent=False)
 _ratio_card(rr2, "Submission-to-Interview", "submission to interview", sub_to_int)
 _ratio_card(rr3, "Interview-to-Hire", "interview to hire", int_to_hire)
-_ratio_card(rr4, "Hire-to-Start", "hire to start", hire_to_start)
-_ratio_card(rr5, "Close Rate", "close rate", close_rate)
-_ratio_card(rr6, "Back Out", "back out", back_out)
+_ratio_card(rr4, "Close Rate", "close rate", close_rate)
+_ratio_card(rr5, "Back Out", "back out", back_out)
 
 # ---------------------------------------------------------------------------
 # Detail table — cleaned up
@@ -237,5 +236,3 @@ else:
                 row[label] = _format_value(m, s[m])
             rows.append(row)
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-
