@@ -68,7 +68,7 @@ active["submissions_per_req"] = (active["submissions"] / active["new_reqs"]).rou
 active["sub_to_int"] = (active["interviews"] / active["submissions"]).round(3)
 active["int_to_hire"] = (active["hires"] / active["interviews"]).round(3)
 active["close_rate"] = (active["starts"] / active["new_reqs"]).round(3)
-active["bad_delivery"] = (active["not_hires"] / active["hires"].replace(0, pd.NA)).round(3)
+active["bad_delivery"] = (active["not_hires"] / active["hires"].replace(0, float("nan"))).round(3)
 
 st.divider()
 st.subheader("Recruiter detail")
