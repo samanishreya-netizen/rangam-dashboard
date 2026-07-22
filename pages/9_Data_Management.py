@@ -15,6 +15,38 @@ st.caption("Upload the monthly Excel file here — new months are added automati
            "exists in the database is shown separately so you can choose whether to update it. One upload handles both.")
 
 sb = get_client()
+
+# PostgREST rejects values like "2.0" into integer columns (it needs "2") —
+# these fields must be sent as native Python int, never float, even though
+# pandas silently upgrades int columns to float64 whenever a None/NaN is
+# mixed in (which happens constantly here, e.g. Pre-ID columns for clients
+# that don't split Pre-ID/Sourced).
+INT_FIELDS_MONTHLY = {"new_reqs", "worked_reqs", "submissions", "interviews", "hire_preid", "hire_sourced",
+                       "start_preid", "start_sourced", "nothire_preid", "nothire_sourced", "concluded", "headcount"}
+INT_FIELDS_CLIENT = INT_FIELDS_MONTHLY | {"hours_worked", "hire_combined", "start_combined", "nothire_combined"}
+INT_FIELDS_RECRUITER = {"new_reqs", "worked_reqs", "submissions", "interviews", "hires", "starts", "not_hires"}
+INT_FIELDS_ONBOARDING = {"hires", "starts"}
+
+
+def to_int(v):
+    if v is None:
+        return None
+    try:
+        fv = float(v)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(fv):
+        return None
+    return int(round(fv))
+
+
+def fix_ints(row, fields):
+    for f in fields:
+        if f in row:
+            row[f] = to_int(row[f])
+    return row
+
+
 uploaded = st.file_uploader("Upload workbook (.xlsx)", type=["xlsx"])
 
 if uploaded:
@@ -107,6 +139,7 @@ if uploaded:
                 # --- new months: company-wide ---
                 for _, r in overall_new.iterrows():
                     row = {k: (None if pd.isna(v) else v) for k, v in r.to_dict().items()}
+                    row = fix_ints(row, INT_FIELDS_MONTHLY)
                     row["month"] = str(row["month"])
                     row["source_upload_id"] = upload_id
                     try:
@@ -117,6 +150,7 @@ if uploaded:
                 # --- new months: client-level ---
                 for _, r in client_new.iterrows():
                     row = {k: (None if pd.isna(v) else v) for k, v in r.to_dict().items()}
+                    row = fix_ints(row, INT_FIELDS_CLIENT)
                     row["month"] = str(row["month"])
                     client_name = row.pop("client")
                     cid = clients_df.loc[clients_df.client_name == client_name, "client_id"]
@@ -143,6 +177,7 @@ if uploaded:
                             existing_recruiters = pd.concat([existing_recruiters, pd.DataFrame(new_rec.data)], ignore_index=True)
                     for _, r in data["recruiters"].iterrows():
                         row = {k: (None if pd.isna(v) else v) for k, v in r.to_dict().items()}
+                        row = fix_ints(row, INT_FIELDS_RECRUITER)
                         row["period_start"] = str(row["period_start"])
                         row["period_end"] = str(row["period_end"])
                         recruiter_name = row.pop("recruiter_name")
@@ -171,6 +206,7 @@ if uploaded:
                             existing_onb = pd.concat([existing_onb, pd.DataFrame(new_onb.data)], ignore_index=True)
                     for _, r in data["onboarding"].iterrows():
                         row = {k: (None if pd.isna(v) else v) for k, v in r.to_dict().items()}
+                        row = fix_ints(row, INT_FIELDS_ONBOARDING)
                         row["period_start"] = str(row["period_start"])
                         row["period_end"] = str(row["period_end"])
                         specialist_name = row.pop("specialist_name")
@@ -196,6 +232,7 @@ if uploaded:
                         old_overall = old_overall[0] if old_overall else None
                         new_row = {k: (None if pd.isna(v) else v) for k, v in
                                    data["overall"][data["overall"]["month"].astype(str) == m].iloc[0].to_dict().items()}
+                        new_row = fix_ints(new_row, INT_FIELDS_MONTHLY)
                         update_dict = {k: v for k, v in new_row.items() if k != "month"}
                         sb.table("fact_monthly_performance").update(update_dict).eq("month", m).execute()
                         sb.table("data_correction_log").insert({
@@ -212,6 +249,7 @@ if uploaded:
                     month_client_rows = data["clientwise"][data["clientwise"]["month"].astype(str) == m]
                     for _, r in month_client_rows.iterrows():
                         row = {k: (None if pd.isna(v) else v) for k, v in r.to_dict().items()}
+                        row = fix_ints(row, INT_FIELDS_CLIENT)
                         row["month"] = str(row["month"])
                         client_name = row.pop("client")
                         msp_name = row.pop("msp")
@@ -311,6 +349,7 @@ if st.button("Save changes", type="primary"):
     any_changes = False
     for _, row in edited.iterrows():
         row_dict = {k: (None if pd.isna(v) else v) for k, v in row.to_dict().items()}
+        row_dict = fix_ints(row_dict, INT_FIELDS_MONTHLY)
         row_dict["is_month_closed"] = row_dict.get("revenue_inr") is not None and row_dict.get("revenue_usd") is not None
         if row_dict.get("fact_id") is None:
             if not row_dict.get("month"):
